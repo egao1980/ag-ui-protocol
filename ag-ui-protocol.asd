@@ -3,6 +3,7 @@
   :description "CLOS AG-UI (agent-user events) protocol for cl-stack"
   :author "egao1980"
   :license "MIT"
+  :depends-on ("rpc-protocol")
   :serial t
   :pathname "src"
   :components ((:file "package")
