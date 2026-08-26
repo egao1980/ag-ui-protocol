@@ -3,14 +3,115 @@
   (:nicknames #:stack-ag-ui)
   (:export #:ag-ui-error
            #:ag-ui-error-message
+           ;; events
            #:ag-ui-event
            #:ag-ui-event-type
+           #:ag-ui-event-timestamp
+           #:ag-ui-event-raw-event
+           #:ag-ui-event-metadata
+           #:run-started-event
+           #:run-finished-event
+           #:run-error-event
+           #:step-started-event
+           #:step-finished-event
+           #:text-message-start-event
+           #:text-message-content-event
+           #:text-message-end-event
+           #:tool-call-start-event
+           #:tool-call-args-event
+           #:tool-call-end-event
+           #:tool-call-result-event
+           #:state-snapshot-event
+           #:state-delta-event
+           #:messages-snapshot-event
+           #:make-run-started-event
+           #:make-run-finished-event
+           #:make-run-error-event
+           #:make-step-started-event
+           #:make-step-finished-event
+           #:make-text-message-start-event
+           #:make-text-message-content-event
+           #:make-text-message-end-event
+           #:make-tool-call-start-event
+           #:make-tool-call-args-event
+           #:make-tool-call-end-event
+           #:make-tool-call-result-event
+           #:make-state-snapshot-event
+           #:make-state-delta-event
+           #:make-messages-snapshot-event
+           #:run-started-thread-id
+           #:run-started-run-id
+           #:run-started-parent-run-id
+           #:run-started-input
+           #:run-finished-thread-id
+           #:run-finished-run-id
+           #:run-finished-result
+           #:run-error-message
+           #:run-error-code
+           #:step-event-name
+           #:text-message-id
+           #:text-message-role
+           #:text-message-delta
+           #:tool-call-id
+           #:tool-call-name
+           #:tool-call-parent-message-id
+           #:tool-call-delta
+           #:tool-call-result-content
+           #:tool-call-result-role
+           #:state-snapshot-value
+           #:state-delta-patch
+           #:messages-snapshot-messages
+           ;; input / messages
            #:run-agent-input
+           #:run-agent-input-thread-id
+           #:run-agent-input-run-id
+           #:run-agent-input-parent-run-id
+           #:run-agent-input-state
+           #:run-agent-input-messages
+           #:run-agent-input-tools
+           #:run-agent-input-context
+           #:run-agent-input-forwarded-props
+           #:make-run-agent-input
+           #:ag-ui-message
+           #:ag-ui-message-id
+           #:ag-ui-message-role
+           #:ag-ui-message-content
+           #:ag-ui-message-name
+           #:ag-ui-message-tool-call-id
+           #:ag-ui-message-tool-calls
+           #:make-ag-ui-message
+           #:ag-ui-tool
+           #:ag-ui-tool-name
+           #:ag-ui-tool-description
+           #:ag-ui-tool-parameters
+           #:make-ag-ui-tool
+           #:ag-ui-context
+           #:ag-ui-context-description
+           #:ag-ui-context-value
+           #:make-ag-ui-context
+           ;; json
+           #:json-object
+           #:param
+           #:encode-json
+           #:decode-json
+           #:encode-run-agent-input
+           #:decode-run-agent-input
+           ;; codec
+           #:encode-ag-ui-event
+           #:decode-ag-ui-event
+           #:encode-ag-ui-sse
+           #:decode-ag-ui-sse-stream
+           ;; agent / serve
+           #:ag-ui-agent
+           #:ag-ui-agent-name
+           #:ag-ui-agent-handler
+           #:make-ag-ui-agent
+           #:echo-handler
            #:ag-ui-backend
            #:*ag-ui-backend*
            #:run-agent
-           #:encode-ag-ui-event
-           #:decode-ag-ui-event
-           #:serve-ag-ui))
+           #:serve-ag-ui
+           #:make-ag-ui-app
+           #:last-user-text))
 
 (in-package #:ag-ui-protocol)
