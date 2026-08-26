@@ -5,7 +5,7 @@
   :license "MIT"
   :depends-on ("yason" "babel" "sse-protocol"
                "schema-protocol" "schema-protocol-json")
-  :properties (:cl-repo (:ci (:with ("dissect") :sources (("dissect" :ql)))))
+  :properties (:cl-repo (:ci (:with ("dissect"))))
   :serial t
   :pathname "src"
   :components ((:file "package")
