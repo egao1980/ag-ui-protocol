@@ -1,13 +1,18 @@
 (defsystem "ag-ui-protocol"
-  :version "0.1.0"
-  :description "CLOS AG-UI (agent-user events) protocol for cl-stack"
+  :version "0.2.0"
+  :description "CLOS AG-UI protocol — typed agent↔UI events (not JSON-RPC)"
   :author "egao1980"
   :license "MIT"
-  :depends-on ("rpc-protocol")
+  :depends-on ("yason" "babel" "sse-protocol"
+               "schema-protocol" "schema-protocol-json")
+  :properties (:cl-repo (:ci (:with ("dissect") :sources (("dissect" :ql)))))
   :serial t
   :pathname "src"
   :components ((:file "package")
                (:file "conditions")
+               (:file "types")
+               (:file "json")
+               (:file "events")
                (:file "protocol"))
   :in-order-to ((test-op (test-op "ag-ui-protocol/tests"))))
 
