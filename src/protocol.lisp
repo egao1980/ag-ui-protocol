@@ -6,6 +6,10 @@
 (defgeneric run-agent (backend input &key on-event)
   (:documentation "Run INPUT on BACKEND (local agent or HTTP client)."))
 
+(defmethod run-agent :around (backend input &rest args)
+  (declare (ignore backend input args))
+  (with-ag-ui-restarts (call-next-method)))
+
 (defgeneric serve-ag-ui (backend &key path host port)
   (:documentation "Serve BACKEND as POST path → text/event-stream."))
 
