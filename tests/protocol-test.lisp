@@ -206,7 +206,7 @@
 (deftest run-agent-use-value
   (let ((events (handler-bind ((ag-ui-protocol:ag-ui-error
                                 (lambda (c)
-                                  (ag-ui-protocol:invoke-use-value
+                                  (use-value
                                    (list (ag-ui-protocol:make-run-finished-event
                                           :thread-id "t" :run-id "r"))
                                    c))))
