@@ -71,7 +71,7 @@
     (ok (equal "msg-789" (ag-ui-protocol:text-message-id text)))
     (ok (equal "assistant" (ag-ui-protocol:text-message-role text)))
     (ok (equal "replace"
-               (ag-ui-protocol:param (first (ag-ui-protocol:state-delta-patch delta))
+               (ag-ui-protocol:param (aref (ag-ui-protocol:state-delta-patch delta) 0)
                                      "op")))))
 
 (deftest omit-optional-fields
@@ -98,13 +98,13 @@
     (ok (equal "thread_123" (ag-ui-protocol:run-agent-input-thread-id decoded)))
     (ok (equal "Hello, how are you?"
                (ag-ui-protocol:ag-ui-message-content
-                (first (ag-ui-protocol:run-agent-input-messages decoded)))))
+                (aref (ag-ui-protocol:run-agent-input-messages decoded) 0))))
     (ok (equal "search"
                (ag-ui-protocol:ag-ui-tool-name
-                (first (ag-ui-protocol:run-agent-input-tools decoded)))))
+                (aref (ag-ui-protocol:run-agent-input-tools decoded) 0))))
     (ok (equal "UTC"
                (ag-ui-protocol:ag-ui-context-value
-                (first (ag-ui-protocol:run-agent-input-context decoded)))))))
+                (aref (ag-ui-protocol:run-agent-input-context decoded) 0))))))
 
 (deftest protobuf-is-json-octets
   (let* ((ev (ag-ui-protocol:make-text-message-content-event
@@ -173,3 +173,33 @@
                (ag-ui-protocol:make-run-started-event :thread-id "t" :run-id "r"))))
     (ok (eql 0 (search "data: " wire)))
     (ok (search "\"type\":\"RUN_STARTED\"" wire))))
+
+(deftest json-schema-emit-tagged-events
+  (let ((js (ag-ui-protocol:ag-ui-json-schema 'ag-ui-protocol:ag-ui-event)))
+    (ok (hash-table-p js))
+    (ok (gethash "oneOf" js))
+    (ok (equal "type" (gethash "propertyName" (gethash "discriminator" js))))))
+
+(deftest validate-ag-ui-json-official
+  (let ((ev (ag-ui-protocol:validate-ag-ui-json
+             "{\"type\":\"RUN_STARTED\",\"threadId\":\"thread_123\",\"runId\":\"run_456\"}")))
+    (ok (typep ev 'ag-ui-protocol:run-started-event))
+    (ok (equal "thread_123" (ag-ui-protocol:run-started-thread-id ev))))
+  (ok (signals (ag-ui-protocol:validate-ag-ui-json
+                "{\"type\":\"REASONING_START\",\"messageId\":\"x\"}")
+               'ag-ui-protocol:ag-ui-error)))
+
+(deftest validate-tool-arguments-json-schema
+  (let* ((params (ag-ui-protocol:json-object
+                  "type" "object"
+                  "required" (vector "q")
+                  "properties" (ag-ui-protocol:json-object
+                                "q" (ag-ui-protocol:json-object "type" "string"))
+                  "additionalProperties" nil))
+         (tool (ag-ui-protocol:make-ag-ui-tool :name "search" :parameters params)))
+    (ok (equal "hi" (gethash "q" (ag-ui-protocol:validate-tool-arguments
+                                  tool (ag-ui-protocol:json-object "q" "hi")))))
+    (ok (signals (ag-ui-protocol:validate-tool-arguments
+                  tool (ag-ui-protocol:json-object "q" 1))
+                 'ag-ui-protocol:ag-ui-error))))
+

@@ -23,6 +23,10 @@ Clack app (no HTTP server required to test):
 ;; POST /  Content-Type: application/json  →  text/event-stream
 ```
 
+Models are [`schema-protocol`](https://github.com/egao1980/schema-protocol) (`defschema`, `:tag type`).
+JSON Schema emit/validate (tool `parameters`, incoming events) is
+[`schema-protocol-json`](https://github.com/egao1980/schema-protocol-json).
+
 Bindings: [`ag-ui-backend-sse`](https://github.com/egao1980/ag-ui-backend-sse)
 (default), [`ag-ui-backend-protobuf`](https://github.com/egao1980/ag-ui-backend-protobuf)
 (`:format :protobuf` = JSON UTF-8 octets until the official Event proto is compiled).

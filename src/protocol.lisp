@@ -19,10 +19,12 @@
 (defun last-user-text (input)
   "Content of the last user message, or \"\"."
   (let ((text ""))
-    (dolist (m (run-agent-input-messages input) text)
-      (when (and (string= (ag-ui-message-role m) "user")
-                 (stringp (ag-ui-message-content m)))
-        (setf text (ag-ui-message-content m))))))
+    (map nil (lambda (m)
+               (when (and (string= (ag-ui-message-role m) "user")
+                          (stringp (ag-ui-message-content m)))
+                 (setf text (ag-ui-message-content m))))
+         (or (run-agent-input-messages input) #()))
+    text))
 
 (defun echo-handler (input)
   "Wave-1 echo: RUN_STARTED → TEXT_MESSAGE_* of last user text → RUN_FINISHED."

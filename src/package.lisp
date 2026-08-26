@@ -96,6 +96,9 @@
            #:decode-json
            #:encode-run-agent-input
            #:decode-run-agent-input
+           #:ag-ui-json-schema
+           #:validate-ag-ui-json
+           #:validate-tool-arguments
            ;; codec
            #:encode-ag-ui-event
            #:decode-ag-ui-event

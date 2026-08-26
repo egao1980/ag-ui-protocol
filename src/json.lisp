@@ -24,19 +24,6 @@
 (defun decode-json (string)
   (yason:parse string :object-as :hash-table :json-arrays-as-vectors t))
 
-(defun %as-list (seq)
-  (cond
-    ((null seq) nil)
-    ((vectorp seq) (coerce seq 'list))
-    ((listp seq) seq)
-    (t (list seq))))
-
-(defun %as-vector (seq)
-  (cond
-    ((null seq) #())
-    ((vectorp seq) seq)
-    (t (coerce seq 'vector))))
-
 (defun %source-string (source)
   (cond
     ((stringp source) source)
@@ -49,69 +36,59 @@
              do (write-char c out))))
     (t (error 'ag-ui-error :message "cannot coerce source to string"))))
 
-(defun encode-message (message)
-  (json-object
-   "id" (ag-ui-message-id message)
-   "role" (ag-ui-message-role message)
-   "content" (or (ag-ui-message-content message) :omit)
-   "name" (or (ag-ui-message-name message) :omit)
-   "toolCallId" (or (ag-ui-message-tool-call-id message) :omit)
-   "toolCalls" (if (ag-ui-message-tool-calls message)
-                   (%as-vector (ag-ui-message-tool-calls message))
-                   :omit)))
+(defun %as-list (seq)
+  (cond
+    ((null seq) nil)
+    ((vectorp seq) (coerce seq 'list))
+    ((listp seq) seq)
+    (t (list seq))))
 
-(defun decode-message (obj)
-  (make-ag-ui-message
-   :id (or (param obj "id") (param obj "messageId"))
-   :role (or (param obj "role") "user")
-   :content (param obj "content")
-   :name (param obj "name")
-   :tool-call-id (or (param obj "toolCallId") (param obj "tool_call_id"))
-   :tool-calls (%as-list (param obj "toolCalls"))))
-
-(defun encode-tool (tool)
-  (json-object
-   "name" (ag-ui-tool-name tool)
-   "description" (ag-ui-tool-description tool)
-   "parameters" (or (ag-ui-tool-parameters tool) (json-object))))
-
-(defun decode-tool (obj)
-  (make-ag-ui-tool
-   :name (param obj "name")
-   :description (or (param obj "description") "")
-   :parameters (param obj "parameters")))
-
-(defun encode-context (ctx)
-  (json-object
-   "description" (ag-ui-context-description ctx)
-   "value" (ag-ui-context-value ctx)))
-
-(defun decode-context (obj)
-  (make-ag-ui-context
-   :description (param obj "description")
-   :value (param obj "value")))
+(defun %schema-error (c)
+  (error 'ag-ui-error
+         :message (or (ignore-errors
+                        (princ-to-string
+                         (first (stack-schema:schema-validation-error-issues c))))
+                      (princ-to-string c))))
 
 (defun encode-run-agent-input (input)
-  (json-object
-   "threadId" (run-agent-input-thread-id input)
-   "runId" (run-agent-input-run-id input)
-   "parentRunId" (or (run-agent-input-parent-run-id input) :omit)
-   "state" (or (run-agent-input-state input) :omit)
-   "messages" (map 'vector #'encode-message
-                   (or (run-agent-input-messages input) #()))
-   "tools" (map 'vector #'encode-tool (or (run-agent-input-tools input) #()))
-   "context" (map 'vector #'encode-context (or (run-agent-input-context input) #()))
-   "forwardedProps" (or (run-agent-input-forwarded-props input) (json-object))))
+  (stack-schema:dump input))
 
 (defun decode-run-agent-input (source)
-  (let ((obj (if (hash-table-p source) source (decode-json (%source-string source)))))
-    (make-run-agent-input
-     :thread-id (or (param obj "threadId") (param obj "thread_id"))
-     :run-id (or (param obj "runId") (param obj "run_id"))
-     :parent-run-id (or (param obj "parentRunId") (param obj "parent_run_id"))
-     :state (let ((st (param obj "state")))
-              (if (eq st :null) nil st))
-     :messages (mapcar #'decode-message (%as-list (param obj "messages")))
-     :tools (mapcar #'decode-tool (%as-list (param obj "tools")))
-     :context (mapcar #'decode-context (%as-list (param obj "context")))
-     :forwarded-props (param obj "forwardedProps"))))
+  (handler-case
+      (stack-schema:parse
+       'run-agent-input
+       (if (or (hash-table-p source) (listp source))
+           source
+           (decode-json (%source-string source))))
+    (stack-schema:schema-validation-error (c)
+      (%schema-error c))))
+
+(defun ag-ui-json-schema (schema &key (draft :draft-07))
+  "Draft-07 JSON Schema for a model (events, RunAgentInput, tools, …)."
+  (stack-schema:json-schema schema :draft draft))
+
+(defun validate-ag-ui-json (source &key (schema 'ag-ui-event))
+  "Validate JSON (string or table) against SCHEMA's emitted JSON Schema, then parse."
+  (let ((obj (if (or (hash-table-p source) (listp source))
+                 source
+                 (decode-json (%source-string source)))))
+    (handler-case
+        (stack-schema-json:validate-instance (ag-ui-json-schema schema) obj)
+      (stack-schema-json:json-schema-validation-error (c)
+        (error 'ag-ui-error :message (princ-to-string c))))
+    (stack-schema:parse schema obj)))
+
+(defun validate-tool-arguments (tool arguments)
+  "Validate ARGUMENTS (hash-table / JSON string) against TOOL.parameters JSON Schema.
+   No-op when the tool has no parameters. Returns the parsed table."
+  (let ((params (ag-ui-tool-parameters tool))
+        (args (if (or (hash-table-p arguments) (listp arguments))
+                  arguments
+                  (decode-json (%source-string arguments)))))
+    (unless params
+      (return-from validate-tool-arguments args))
+    (handler-case
+        (stack-schema-json:validate-instance params args)
+      (stack-schema-json:json-schema-validation-error (c)
+        (error 'ag-ui-error :message (princ-to-string c))))
+    args))
