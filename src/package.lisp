@@ -3,6 +3,14 @@
   (:nicknames #:stack-ag-ui)
   (:export #:ag-ui-error
            #:ag-ui-error-message
+           #:ag-ui-run-error
+           #:ag-ui-run-error-code
+           #:call-with-ag-ui-restarts
+           #:with-ag-ui-restarts
+           #:invoke-retry
+           #:invoke-use-value
+           #:auto-retry
+           #:with-auto-retry
            ;; events
            #:ag-ui-event
            #:ag-ui-event-type

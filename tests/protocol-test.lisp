@@ -203,3 +203,17 @@
                   tool (ag-ui-protocol:json-object "q" 1))
                  'ag-ui-protocol:ag-ui-error))))
 
+(deftest run-agent-use-value
+  (let ((events (handler-bind ((ag-ui-protocol:ag-ui-error
+                                (lambda (c)
+                                  (use-value
+                                   (list (ag-ui-protocol:make-run-finished-event
+                                          :thread-id "t" :run-id "r"))
+                                   c))))
+                  (ag-ui-protocol:run-agent
+                   (make-instance 'ag-ui-protocol:ag-ui-backend)
+                   (ag-ui-protocol:make-run-agent-input
+                    :thread-id "t" :run-id "r")))))
+    (ok (= 1 (length events)))
+    (ok (typep (first events) 'ag-ui-protocol:run-finished-event))))
+
