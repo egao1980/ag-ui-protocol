@@ -140,6 +140,14 @@
                           "TEXT_MESSAGE_END" "RUN_FINISHED"))
                seen))))
 
+(defun %clack-body-string (body)
+  (cond
+    ((functionp body)
+     (with-output-to-string (s) (funcall body s)))
+    ((listp body) (apply #'concatenate 'string body))
+    ((stringp body) body)
+    (t "")))
+
 (deftest clack-app-post-sse
   (let* ((agent (ag-ui-protocol:make-ag-ui-agent))
          (app (ag-ui-protocol:make-ag-ui-app agent :path "/"))
@@ -154,13 +162,33 @@
                                  :raw-body body)))
          (status (first res))
          (headers (second res))
-         (chunks (third res))
-         (wire (apply #'concatenate 'string chunks))
+         (wire (%clack-body-string (third res)))
          (events (ag-ui-protocol:decode-ag-ui-sse-stream wire)))
     (ok (= 200 status))
     (ok (search "text/event-stream" (getf headers :content-type)))
+    (ok (functionp (third res)))
     (ok (= 5 (length events)))
     (ok (equal "yo" (ag-ui-protocol:text-message-delta (third events))))))
+
+(deftest ag-ui-emit-incremental-skips-mapc
+  (let* ((emitted '())
+         (handler (lambda (input)
+                    (declare (ignore input))
+                    (ag-ui-protocol:ag-ui-emit
+                     (ag-ui-protocol:make-run-started-event :thread-id "t" :run-id "r"))
+                    (ag-ui-protocol:ag-ui-emit
+                     (ag-ui-protocol:make-run-finished-event :thread-id "t" :run-id "r"))
+                    (list (ag-ui-protocol:make-run-error-event :message "should-not-mapc"))))
+         (agent (ag-ui-protocol:make-ag-ui-agent :handler handler))
+         (events (ag-ui-protocol:run-agent
+                  agent
+                  (ag-ui-protocol:make-run-agent-input :thread-id "t" :run-id "r")
+                  :on-event (lambda (ev)
+                              (push (ag-ui-protocol:ag-ui-event-type ev) emitted)))))
+    (ok (= 2 (length events)))
+    (ok (equal '("RUN_STARTED" "RUN_FINISHED")
+               (mapcar #'ag-ui-protocol:ag-ui-event-type events)))
+    (ok (equal '("RUN_FINISHED" "RUN_STARTED") emitted))))
 
 (deftest clack-app-404
   (let ((app (ag-ui-protocol:make-ag-ui-app (ag-ui-protocol:make-ag-ui-agent)

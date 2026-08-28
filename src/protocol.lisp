@@ -42,13 +42,31 @@
           (make-text-message-end-event :message-id mid)
           (make-run-finished-event :thread-id thread :run-id run))))
 
+(defvar *ag-ui-emit* nil
+  "Bound by RUN-AGENT to (lambda (ag-ui-event)). Incremental handlers call AG-UI-EMIT.")
+
+(defun ag-ui-emit (event)
+  "Push EVENT to the current RUN-AGENT sink, if any."
+  (when *ag-ui-emit*
+    (funcall *ag-ui-emit* event))
+  event)
+
 (defmethod run-agent ((agent ag-ui-agent) input &key on-event)
   (let* ((input (%ensure-input input))
          (fn (or (ag-ui-agent-handler agent) #'echo-handler))
-         (events (funcall fn input)))
-    (when on-event
-      (mapc on-event events))
-    events))
+         (collected '())
+         (emitted-p nil)
+         (*ag-ui-emit*
+          (lambda (event)
+            (setf emitted-p t)
+            (setf collected (nconc collected (list event)))
+            (when on-event (funcall on-event event)))))
+    (let ((events (funcall fn input)))
+      (cond
+        (emitted-p collected)
+        (t
+         (when on-event (mapc on-event events))
+         events)))))
 
 (defmethod run-agent ((backend ag-ui-backend) input &key on-event)
   (declare (ignore input on-event))
@@ -91,16 +109,18 @@
       (cond
         ((and (eq method :post) (string= req-path path))
          (handler-case
-             (let* ((input (decode-run-agent-input
-                            (%slurp-raw-body (getf env :raw-body))))
-                    (events (run-agent agent input))
-                    (body (mapcar (lambda (ev)
-                                    (encode-ag-ui-sse ev :format event-format))
-                                  events)))
+             (let ((input (decode-run-agent-input
+                           (%slurp-raw-body (getf env :raw-body)))))
                (list 200
                      '(:content-type "text/event-stream; charset=utf-8"
                        :cache-control "no-cache")
-                     body))
+                     (lambda (stream)
+                       (run-agent agent input
+                                  :on-event
+                                  (lambda (ev)
+                                    (write-string (encode-ag-ui-sse ev :format event-format)
+                                                  stream)
+                                    (force-output stream))))))
            (ag-ui-error (c)
              (list 400
                    '(:content-type "application/json; charset=utf-8")

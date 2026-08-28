@@ -39,14 +39,16 @@
 
 (defun decode-ag-ui-sse-stream (source &key (format :json) on-event)
   "Parse an event-stream of AG-UI JSON events. Returns a list of CLOS events.
-   SOURCE may be a stream or a string."
+   SOURCE may be a stream or a string. ON-EVENT fires as each event is read."
   (flet ((collect (src)
            (let ((out '()))
-             (dolist (ev (sse-protocol:collect-sse-events src))
-               (let ((decoded (decode-ag-ui-event (sse-protocol:sse-event-data ev)
-                                                  :format format)))
-                 (when on-event (funcall on-event decoded))
-                 (push decoded out)))
+             (sse-protocol:map-sse-events
+              (lambda (ev)
+                (let ((decoded (decode-ag-ui-event (sse-protocol:sse-event-data ev)
+                                                   :format format)))
+                  (when on-event (funcall on-event decoded))
+                  (push decoded out)))
+              src)
              (nreverse out))))
     (if (stringp source)
         (with-input-from-string (s source)

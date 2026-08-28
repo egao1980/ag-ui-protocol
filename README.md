@@ -16,6 +16,10 @@ Typed events — **not JSON-RPC**. Official HTTP is `POST RunAgentInput` → SSE
                            :role "user" :content "hi")))))
 ```
 
+Incremental handlers call `ag-ui-emit` while `*ag-ui-emit*` is bound by `run-agent`.
+If the handler never emits, a returned event list is `mapc`'d onto `:on-event` (`echo-handler`).
+`make-ag-ui-app` writes each event to the SSE stream as it is emitted (`force-output`).
+
 Clack app (no HTTP server required to test):
 
 ```lisp

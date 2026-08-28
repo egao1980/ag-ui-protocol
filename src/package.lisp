@@ -123,6 +123,8 @@
            #:run-agent
            #:serve-ag-ui
            #:make-ag-ui-app
-           #:last-user-text))
+           #:last-user-text
+           #:*ag-ui-emit*
+           #:ag-ui-emit))
 
 (in-package #:ag-ui-protocol)
