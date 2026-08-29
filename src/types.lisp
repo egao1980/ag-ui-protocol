@@ -10,6 +10,20 @@
                when v
                  append (list k v))))
 
+(defun event-field (event slot-name)
+  "Value of SLOT-NAME on EVENT, or NIL when the field was omitted.
+
+   The inverse of %MAKE. Optional fields are deliberately left unbound so DUMP
+   omits them rather than emitting null, which makes a bare accessor call unsafe
+   on any field a producer may skip. Reducers and transforms should read
+   optional fields through this."
+  (and (slot-exists-p event slot-name)
+       (slot-boundp event slot-name)
+       (slot-value event slot-name)))
+
+;;; Roles: developer, system, assistant, user, tool, activity, reasoning.
+;;; ACTIVITY-TYPE applies to activity messages, ERROR to failed tool results,
+;;; and ENCRYPTED-VALUE to reasoning carried across turns opaquely.
 (stack-schema:defschema ag-ui-message ()
   (id string :accessor ag-ui-message-id)
   (role string :accessor ag-ui-message-role)
@@ -17,6 +31,9 @@
   (name string :optional t :accessor ag-ui-message-name)
   (tool-call-id string :optional t :accessor ag-ui-message-tool-call-id)
   (tool-calls (vector hash-table) :optional t :accessor ag-ui-message-tool-calls)
+  (activity-type string :optional t :accessor ag-ui-message-activity-type)
+  (error string :optional t :accessor ag-ui-message-error)
+  (encrypted-value string :optional t :accessor ag-ui-message-encrypted-value)
   (:key-style :camel)
   (:extra :allow))
 
@@ -34,6 +51,53 @@
   (:key-style :camel)
   (:extra :allow))
 
+;;; Interrupts — the human-in-the-loop contract. A run that needs input ends
+;;; with an interrupt outcome rather than blocking; the client answers by
+;;; starting a NEW run whose input carries a `resume` entry per open interrupt.
+
+(stack-schema:defschema interrupt ()
+  "One pause point. REASON routes the UI: `tool_call`, `input_required`, and
+   `confirmation` are spec-defined; any other string is a valid extension and
+   clients must render it from MESSAGE rather than erroring."
+  (id string :accessor interrupt-id)
+  (reason string :accessor interrupt-reason)
+  (message string :optional t :accessor interrupt-message)
+  (tool-call-id string :optional t :accessor interrupt-tool-call-id)
+  (response-schema hash-table :optional t :accessor interrupt-response-schema)
+  (expires-at string :optional t :accessor interrupt-expires-at)
+  (metadata hash-table :optional t :accessor interrupt-metadata)
+  (subagent-run-id string :optional t :accessor interrupt-subagent-run-id)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema resume-entry ()
+  "One answer to one interrupt. A denial is expressed inside PAYLOAD (say
+   {\"approved\": false}), not by STATUS — `cancelled` means the user walked
+   away without answering."
+  (interrupt-id string :accessor resume-interrupt-id)
+  (status (member "resolved" "cancelled") :accessor resume-status)
+  (payload t :optional t :accessor resume-payload)
+  (metadata hash-table :optional t :accessor resume-metadata)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema run-outcome ()
+  (outcome-type string :key "type" :accessor run-outcome-type)
+  (:tag outcome-type run-success-outcome run-interrupt-outcome)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema run-success-outcome (run-outcome)
+  (outcome-type (eql "success") :default "success" :key "type")
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema run-interrupt-outcome (run-outcome)
+  (outcome-type (eql "interrupt") :default "interrupt" :key "type")
+  (interrupts (vector interrupt) :default #() :accessor outcome-interrupts)
+  (:key-style :camel)
+  (:extra :allow))
+
 (stack-schema:defschema run-agent-input ()
   (thread-id string :accessor run-agent-input-thread-id)
   (run-id string :accessor run-agent-input-run-id)
@@ -43,15 +107,42 @@
   (tools (vector ag-ui-tool) :default #() :accessor run-agent-input-tools)
   (context (vector ag-ui-context) :default #() :accessor run-agent-input-context)
   (forwarded-props hash-table :optional t :accessor run-agent-input-forwarded-props)
+  (resume (vector resume-entry) :optional t :accessor run-agent-input-resume)
   (:key-style :camel)
   (:extra :allow))
 
+;;; Variants are listed explicitly rather than discovered from subclasses so
+;;; UNKNOWN-AG-UI-EVENT — which accepts any `type` — can subclass AG-UI-EVENT
+;;; for dispatch without shadowing a real variant during tag resolution.
+;;; Adding a wire event means adding it here.
+;;; SUBAGENT-RUN-ID sits on the base rather than being repeated on the ~25 events
+;;; that declare it upstream. It is optional everywhere, so DUMP omits it and the
+;;; wire is unchanged; the only divergence is accepting it on the deprecated
+;;; THINKING_* family, which upstream rejects — tolerant in, correct out.
 (stack-schema:defschema ag-ui-event ()
   (event-type string :key "type" :accessor ag-ui-event-type)
   (timestamp number :optional t :accessor ag-ui-event-timestamp)
   (raw-event t :optional t :accessor ag-ui-event-raw-event)
   (metadata hash-table :optional t :accessor ag-ui-event-metadata)
-  (:tag event-type)
+  (subagent-run-id string :optional t :accessor ag-ui-event-subagent-run-id)
+  (:tag event-type
+        run-started-event run-finished-event run-error-event
+        step-started-event step-finished-event
+        text-message-start-event text-message-content-event
+        text-message-end-event text-message-chunk-event
+        tool-call-start-event tool-call-args-event tool-call-end-event
+        tool-call-result-event tool-call-chunk-event
+        state-snapshot-event state-delta-event messages-snapshot-event
+        activity-snapshot-event activity-delta-event
+        subagent-started-event subagent-finished-event subagent-error-event
+        reasoning-start-event reasoning-end-event
+        reasoning-message-start-event reasoning-message-content-event
+        reasoning-message-end-event reasoning-message-chunk-event
+        reasoning-encrypted-value-event
+        thinking-start-event thinking-end-event
+        thinking-text-message-start-event thinking-text-message-content-event
+        thinking-text-message-end-event
+        raw-event custom-event)
   (:key-style :camel)
   (:extra :allow))
 
@@ -67,11 +158,15 @@
   (:key-style :camel)
   (:extra :allow))
 
+;;; OUTCOME is optional: a producer written before interrupts existed omits it
+;;; and is read as a normal completion. RESULT stays at the event root for the
+;;; same back-compat reason rather than moving inside the success variant.
 (stack-schema:defschema run-finished-event (ag-ui-event)
   (event-type (eql "RUN_FINISHED") :default "RUN_FINISHED" :key "type")
   (thread-id string :accessor run-finished-thread-id)
   (run-id string :accessor run-finished-run-id)
   (result t :optional t :accessor run-finished-result)
+  (outcome run-outcome :optional t :accessor run-finished-outcome)
   (:key-style :camel)
   (:extra :allow))
 
@@ -114,6 +209,18 @@
   (:key-style :camel)
   (:extra :allow))
 
+;;; Convenience chunk events. A producer may send these instead of the explicit
+;;; triads; EXPAND-AG-UI-CHUNKS in chunks.lisp turns them back into START /
+;;; CONTENT / END so reducers only ever see one shape.
+(stack-schema:defschema text-message-chunk-event (ag-ui-event)
+  (event-type (eql "TEXT_MESSAGE_CHUNK") :default "TEXT_MESSAGE_CHUNK" :key "type")
+  (message-id string :optional t :accessor text-message-id)
+  (role string :optional t :accessor text-message-role)
+  (delta string :optional t :accessor text-message-delta)
+  (name string :optional t :accessor text-message-name)
+  (:key-style :camel)
+  (:extra :allow))
+
 (stack-schema:defschema tool-call-start-event (ag-ui-event)
   (event-type (eql "TOOL_CALL_START") :default "TOOL_CALL_START" :key "type")
   (tool-call-id string :accessor tool-call-id)
@@ -144,6 +251,15 @@
   (:key-style :camel)
   (:extra :allow))
 
+(stack-schema:defschema tool-call-chunk-event (ag-ui-event)
+  (event-type (eql "TOOL_CALL_CHUNK") :default "TOOL_CALL_CHUNK" :key "type")
+  (tool-call-id string :optional t :accessor tool-call-id)
+  (tool-call-name string :optional t :accessor tool-call-name)
+  (parent-message-id string :optional t :accessor tool-call-parent-message-id)
+  (delta string :optional t :accessor tool-call-delta)
+  (:key-style :camel)
+  (:extra :allow))
+
 (stack-schema:defschema state-snapshot-event (ag-ui-event)
   (event-type (eql "STATE_SNAPSHOT") :default "STATE_SNAPSHOT" :key "type")
   (snapshot t :accessor state-snapshot-value)
@@ -162,6 +278,179 @@
   (:key-style :camel)
   (:extra :allow))
 
+;;; Activity — structured, in-progress work reported between chat messages,
+;;; following the same snapshot/delta shape as state. An activity message shares
+;;; the message id space, so its id must not collide with a text message.
+
+(stack-schema:defschema activity-snapshot-event (ag-ui-event)
+  (event-type (eql "ACTIVITY_SNAPSHOT") :default "ACTIVITY_SNAPSHOT" :key "type")
+  (message-id string :accessor text-message-id)
+  (activity-type string :accessor activity-type)
+  (content hash-table :accessor activity-content)
+  (replace boolean :optional t :accessor activity-replace-p)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema activity-delta-event (ag-ui-event)
+  (event-type (eql "ACTIVITY_DELTA") :default "ACTIVITY_DELTA" :key "type")
+  (message-id string :accessor text-message-id)
+  (activity-type string :accessor activity-type)
+  (patch (vector hash-table) :accessor activity-patch)
+  (:key-style :camel)
+  (:extra :allow))
+
+;;; Subagents — bracket a delegated child run so a frontend can tell which
+;;; subagent produced which output. Attribution on other events rides on the
+;;; base AG-UI-EVENT-SUBAGENT-RUN-ID.
+
+(stack-schema:defschema subagent-started-event (ag-ui-event)
+  (event-type (eql "SUBAGENT_STARTED") :default "SUBAGENT_STARTED" :key "type")
+  (subagent-run-id string :accessor ag-ui-event-subagent-run-id)
+  (name string :accessor subagent-name)
+  (description string :optional t :accessor subagent-description)
+  (parent-subagent-run-id string :optional t :accessor subagent-parent-run-id)
+  (parent-tool-call-id string :optional t :accessor subagent-parent-tool-call-id)
+  (parent-message-id string :optional t :accessor subagent-parent-message-id)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema subagent-finished-event (ag-ui-event)
+  (event-type (eql "SUBAGENT_FINISHED") :default "SUBAGENT_FINISHED" :key "type")
+  (subagent-run-id string :accessor ag-ui-event-subagent-run-id)
+  (result t :optional t :accessor subagent-result)
+  (outcome hash-table :optional t :accessor subagent-outcome)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema subagent-error-event (ag-ui-event)
+  (event-type (eql "SUBAGENT_ERROR") :default "SUBAGENT_ERROR" :key "type")
+  (subagent-run-id string :accessor ag-ui-event-subagent-run-id)
+  (message string :accessor run-error-message)
+  (code string :optional t :accessor run-error-code)
+  (:key-style :camel)
+  (:extra :allow))
+
+;;; Reasoning. REASONING_START / REASONING_END bracket a reasoning context;
+;;; REASONING_MESSAGE_* stream the portion meant to be shown to a user.
+;;; REASONING_ENCRYPTED_VALUE carries opaque chain-of-thought a client stores
+;;; and echoes back untouched, for zero-data-retention providers.
+
+(stack-schema:defschema reasoning-start-event (ag-ui-event)
+  (event-type (eql "REASONING_START") :default "REASONING_START" :key "type")
+  (message-id string :accessor text-message-id)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema reasoning-end-event (ag-ui-event)
+  (event-type (eql "REASONING_END") :default "REASONING_END" :key "type")
+  (message-id string :accessor text-message-id)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema reasoning-message-start-event (ag-ui-event)
+  (event-type (eql "REASONING_MESSAGE_START") :default "REASONING_MESSAGE_START"
+              :key "type")
+  (message-id string :accessor text-message-id)
+  (role (eql "reasoning") :default "reasoning" :accessor text-message-role)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema reasoning-message-content-event (ag-ui-event)
+  (event-type (eql "REASONING_MESSAGE_CONTENT")
+              :default "REASONING_MESSAGE_CONTENT" :key "type")
+  (message-id string :accessor text-message-id)
+  (delta string :accessor text-message-delta)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema reasoning-message-end-event (ag-ui-event)
+  (event-type (eql "REASONING_MESSAGE_END") :default "REASONING_MESSAGE_END"
+              :key "type")
+  (message-id string :accessor text-message-id)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema reasoning-message-chunk-event (ag-ui-event)
+  (event-type (eql "REASONING_MESSAGE_CHUNK") :default "REASONING_MESSAGE_CHUNK"
+              :key "type")
+  (message-id string :optional t :accessor text-message-id)
+  (delta string :optional t :accessor text-message-delta)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema reasoning-encrypted-value-event (ag-ui-event)
+  (event-type (eql "REASONING_ENCRYPTED_VALUE")
+              :default "REASONING_ENCRYPTED_VALUE" :key "type")
+  (subtype (member "message" "tool-call") :accessor reasoning-encrypted-subtype)
+  (entity-id string :accessor reasoning-encrypted-entity-id)
+  (encrypted-value string :accessor reasoning-encrypted-value)
+  (:key-style :camel)
+  (:extra :allow))
+
+;;; Deprecated upstream in favour of REASONING_*, removed at their 1.0. Decoded
+;;; so streams from producers that have not migrated still parse.
+
+(stack-schema:defschema thinking-start-event (ag-ui-event)
+  (event-type (eql "THINKING_START") :default "THINKING_START" :key "type")
+  (title string :optional t :accessor thinking-title)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema thinking-end-event (ag-ui-event)
+  (event-type (eql "THINKING_END") :default "THINKING_END" :key "type")
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema thinking-text-message-start-event (ag-ui-event)
+  (event-type (eql "THINKING_TEXT_MESSAGE_START")
+              :default "THINKING_TEXT_MESSAGE_START" :key "type")
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema thinking-text-message-content-event (ag-ui-event)
+  (event-type (eql "THINKING_TEXT_MESSAGE_CONTENT")
+              :default "THINKING_TEXT_MESSAGE_CONTENT" :key "type")
+  (delta string :accessor text-message-delta)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema thinking-text-message-end-event (ag-ui-event)
+  (event-type (eql "THINKING_TEXT_MESSAGE_END")
+              :default "THINKING_TEXT_MESSAGE_END" :key "type")
+  (:key-style :camel)
+  (:extra :allow))
+
+;;; RAW and CUSTOM are the spec's designated extension points: RAW wraps a
+;;; foreign system's event verbatim, CUSTOM carries an application-defined one.
+;;; The RAW-EVENT class is the wire event of type "RAW"; AG-UI-EVENT-RAW-EVENT
+;;; is the unrelated `rawEvent` provenance field every event may carry.
+
+(stack-schema:defschema raw-event (ag-ui-event)
+  (event-type (eql "RAW") :default "RAW" :key "type")
+  (event t :accessor raw-event-payload)
+  (source string :optional t :accessor raw-event-source)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema custom-event (ag-ui-event)
+  (event-type (eql "CUSTOM") :default "CUSTOM" :key "type")
+  (name string :accessor custom-event-name)
+  (value t :optional t :accessor custom-event-value)
+  (:key-style :camel)
+  (:extra :allow))
+
+;;; Forward compatibility. A producer on a newer spec revision may send event
+;;; types this build does not model; the spec requires consumers to tolerate
+;;; them rather than fail the stream. DECODE-AG-UI-EVENT parks those here with
+;;; the source table intact so ENCODE-AG-UI-EVENT can forward them byte-faithful.
+;;; Deliberately absent from AG-UI-EVENT's :tag variants — it is never matched
+;;; by tag resolution, only constructed explicitly.
+(stack-schema:defschema unknown-ag-ui-event (ag-ui-event)
+  (raw-table hash-table :optional t :wire nil :dump nil
+             :accessor unknown-ag-ui-event-table)
+  (:key-style :camel)
+  (:extra :allow))
+
 (defclass ag-ui-agent ()
   ((name :initarg :name :initform "agent" :accessor ag-ui-agent-name)
    (handler :initarg :handler :initform nil :accessor ag-ui-agent-handler)))
@@ -170,12 +459,15 @@
 
 (defvar *ag-ui-backend* nil)
 
-(defun make-ag-ui-message (&key id role content name tool-call-id tool-calls)
+(defun make-ag-ui-message (&key id role content name tool-call-id tool-calls
+                             activity-type error encrypted-value)
   (%make 'ag-ui-message
          :id (or id (format nil "msg-~a" (random (expt 36 6))))
          :role (or role "user")
          :content content :name name
-         :tool-call-id tool-call-id :tool-calls tool-calls))
+         :tool-call-id tool-call-id :tool-calls tool-calls
+         :activity-type activity-type :error error
+         :encrypted-value encrypted-value))
 
 (defun make-ag-ui-tool (&key name (description "") parameters)
   (%make 'ag-ui-tool :name name :description description :parameters parameters))
@@ -184,14 +476,15 @@
   (%make 'ag-ui-context :description description :value value))
 
 (defun make-run-agent-input (&key thread-id run-id parent-run-id state
-                               messages tools context forwarded-props)
+                               messages tools context forwarded-props resume)
   (%make 'run-agent-input
          :thread-id thread-id :run-id run-id
          :parent-run-id parent-run-id :state state
          :messages (if (listp messages) (coerce messages 'vector) messages)
          :tools (if (listp tools) (coerce tools 'vector) tools)
          :context (if (listp context) (coerce context 'vector) context)
-         :forwarded-props forwarded-props))
+         :forwarded-props forwarded-props
+         :resume (if (listp resume) (coerce resume 'vector) resume)))
 
 (defun make-ag-ui-agent (&key (name "agent") handler)
   (make-instance 'ag-ui-agent :name name :handler handler))
@@ -201,9 +494,36 @@
          :thread-id thread-id :run-id run-id
          :parent-run-id parent-run-id :input input :timestamp timestamp))
 
-(defun make-run-finished-event (&key thread-id run-id result timestamp)
+(defun make-interrupt (&key id reason message tool-call-id response-schema
+                         expires-at metadata subagent-run-id)
+  (%make 'interrupt
+         :id (or id (format nil "int-~a" (random (expt 36 8))))
+         :reason (or reason "input_required")
+         :message message :tool-call-id tool-call-id
+         :response-schema response-schema :expires-at expires-at
+         :metadata metadata :subagent-run-id subagent-run-id))
+
+(defun make-resume-entry (&key interrupt-id (status "resolved") payload metadata)
+  (%make 'resume-entry :interrupt-id interrupt-id :status status
+         :payload payload :metadata metadata))
+
+(defun make-run-success-outcome ()
+  (%make 'run-success-outcome :outcome-type "success"))
+
+(defun make-run-interrupt-outcome (&key interrupts)
+  (%make 'run-interrupt-outcome :outcome-type "interrupt"
+         :interrupts (if (listp interrupts) (coerce interrupts 'vector) interrupts)))
+
+(defun make-run-finished-event (&key thread-id run-id result outcome timestamp)
   (%make 'run-finished-event :event-type "RUN_FINISHED"
-         :thread-id thread-id :run-id run-id :result result :timestamp timestamp))
+         :thread-id thread-id :run-id run-id :result result
+         :outcome outcome :timestamp timestamp))
+
+(defun make-run-interrupted-event (&key thread-id run-id interrupts timestamp)
+  "RUN_FINISHED carrying an interrupt outcome — the run paused for input."
+  (make-run-finished-event
+   :thread-id thread-id :run-id run-id :timestamp timestamp
+   :outcome (make-run-interrupt-outcome :interrupts interrupts)))
 
 (defun make-run-error-event (&key message code timestamp)
   (%make 'run-error-event :event-type "RUN_ERROR"
@@ -262,3 +582,94 @@
   (%make 'messages-snapshot-event :event-type "MESSAGES_SNAPSHOT"
          :messages (if (listp messages) (coerce messages 'vector) messages)
          :timestamp timestamp))
+
+(defun make-activity-snapshot-event (&key message-id activity-type content
+                                       (replace t) timestamp)
+  (%make 'activity-snapshot-event :event-type "ACTIVITY_SNAPSHOT"
+         :message-id message-id :activity-type activity-type
+         :content content :replace replace :timestamp timestamp))
+
+(defun make-activity-delta-event (&key message-id activity-type patch timestamp)
+  (%make 'activity-delta-event :event-type "ACTIVITY_DELTA"
+         :message-id message-id :activity-type activity-type
+         :patch (if (listp patch) (coerce patch 'vector) patch)
+         :timestamp timestamp))
+
+(defun make-subagent-started-event (&key subagent-run-id name description
+                                      parent-subagent-run-id parent-tool-call-id
+                                      parent-message-id timestamp)
+  (%make 'subagent-started-event :event-type "SUBAGENT_STARTED"
+         :subagent-run-id subagent-run-id :name name :description description
+         :parent-subagent-run-id parent-subagent-run-id
+         :parent-tool-call-id parent-tool-call-id
+         :parent-message-id parent-message-id :timestamp timestamp))
+
+(defun make-subagent-finished-event (&key subagent-run-id result outcome timestamp)
+  (%make 'subagent-finished-event :event-type "SUBAGENT_FINISHED"
+         :subagent-run-id subagent-run-id :result result :outcome outcome
+         :timestamp timestamp))
+
+(defun make-subagent-error-event (&key subagent-run-id message code timestamp)
+  (%make 'subagent-error-event :event-type "SUBAGENT_ERROR"
+         :subagent-run-id subagent-run-id :message message :code code
+         :timestamp timestamp))
+
+(defun make-text-message-chunk-event (&key message-id role delta name timestamp)
+  (%make 'text-message-chunk-event :event-type "TEXT_MESSAGE_CHUNK"
+         :message-id message-id :role role :delta delta :name name
+         :timestamp timestamp))
+
+(defun make-tool-call-chunk-event (&key tool-call-id tool-call-name
+                                     parent-message-id delta timestamp)
+  (%make 'tool-call-chunk-event :event-type "TOOL_CALL_CHUNK"
+         :tool-call-id tool-call-id :tool-call-name tool-call-name
+         :parent-message-id parent-message-id :delta delta :timestamp timestamp))
+
+(defun make-reasoning-start-event (&key message-id timestamp)
+  (%make 'reasoning-start-event :event-type "REASONING_START"
+         :message-id message-id :timestamp timestamp))
+
+(defun make-reasoning-end-event (&key message-id timestamp)
+  (%make 'reasoning-end-event :event-type "REASONING_END"
+         :message-id message-id :timestamp timestamp))
+
+(defun make-reasoning-message-start-event (&key message-id timestamp)
+  (%make 'reasoning-message-start-event :event-type "REASONING_MESSAGE_START"
+         :message-id message-id :role "reasoning" :timestamp timestamp))
+
+(defun make-reasoning-message-content-event (&key message-id delta timestamp)
+  (%make 'reasoning-message-content-event :event-type "REASONING_MESSAGE_CONTENT"
+         :message-id message-id :delta delta :timestamp timestamp))
+
+(defun make-reasoning-message-end-event (&key message-id timestamp)
+  (%make 'reasoning-message-end-event :event-type "REASONING_MESSAGE_END"
+         :message-id message-id :timestamp timestamp))
+
+(defun make-reasoning-message-chunk-event (&key message-id delta timestamp)
+  (%make 'reasoning-message-chunk-event :event-type "REASONING_MESSAGE_CHUNK"
+         :message-id message-id :delta delta :timestamp timestamp))
+
+(defun make-reasoning-encrypted-value-event (&key subtype entity-id
+                                               encrypted-value timestamp)
+  (%make 'reasoning-encrypted-value-event :event-type "REASONING_ENCRYPTED_VALUE"
+         :subtype subtype :entity-id entity-id
+         :encrypted-value encrypted-value :timestamp timestamp))
+
+(defun make-thinking-start-event (&key title timestamp)
+  (%make 'thinking-start-event :event-type "THINKING_START"
+         :title title :timestamp timestamp))
+
+(defun make-thinking-end-event (&key timestamp)
+  (%make 'thinking-end-event :event-type "THINKING_END" :timestamp timestamp))
+
+(defun make-raw-event (&key event source timestamp)
+  (%make 'raw-event :event-type "RAW"
+         :event event :source source :timestamp timestamp))
+
+(defun make-custom-event (&key name value timestamp)
+  (%make 'custom-event :event-type "CUSTOM"
+         :name name :value value :timestamp timestamp))
+
+(defun make-unknown-ag-ui-event (&key event-type raw-table timestamp)
+  (%make 'unknown-ag-ui-event :event-type event-type
+         :raw-table raw-table :timestamp timestamp))

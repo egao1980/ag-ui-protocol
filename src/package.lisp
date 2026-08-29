@@ -32,6 +32,28 @@
            #:state-snapshot-event
            #:state-delta-event
            #:messages-snapshot-event
+           #:text-message-chunk-event
+           #:tool-call-chunk-event
+           #:activity-snapshot-event
+           #:activity-delta-event
+           #:subagent-started-event
+           #:subagent-finished-event
+           #:subagent-error-event
+           #:reasoning-start-event
+           #:reasoning-end-event
+           #:reasoning-message-start-event
+           #:reasoning-message-content-event
+           #:reasoning-message-end-event
+           #:reasoning-message-chunk-event
+           #:reasoning-encrypted-value-event
+           #:thinking-start-event
+           #:thinking-end-event
+           #:thinking-text-message-start-event
+           #:thinking-text-message-content-event
+           #:thinking-text-message-end-event
+           #:raw-event
+           #:custom-event
+           #:unknown-ag-ui-event
            #:make-run-started-event
            #:make-run-finished-event
            #:make-run-error-event
@@ -47,6 +69,25 @@
            #:make-state-snapshot-event
            #:make-state-delta-event
            #:make-messages-snapshot-event
+           #:make-text-message-chunk-event
+           #:make-tool-call-chunk-event
+           #:make-activity-snapshot-event
+           #:make-activity-delta-event
+           #:make-subagent-started-event
+           #:make-subagent-finished-event
+           #:make-subagent-error-event
+           #:make-reasoning-start-event
+           #:make-reasoning-end-event
+           #:make-reasoning-message-start-event
+           #:make-reasoning-message-content-event
+           #:make-reasoning-message-end-event
+           #:make-reasoning-message-chunk-event
+           #:make-reasoning-encrypted-value-event
+           #:make-thinking-start-event
+           #:make-thinking-end-event
+           #:make-raw-event
+           #:make-custom-event
+           #:make-unknown-ag-ui-event
            #:run-started-thread-id
            #:run-started-run-id
            #:run-started-parent-run-id
@@ -69,6 +110,34 @@
            #:state-snapshot-value
            #:state-delta-patch
            #:messages-snapshot-messages
+           #:text-message-name
+           #:activity-type
+           #:activity-content
+           #:activity-replace-p
+           #:activity-patch
+           #:subagent-name
+           #:subagent-description
+           #:subagent-parent-run-id
+           #:subagent-parent-tool-call-id
+           #:subagent-parent-message-id
+           #:subagent-result
+           #:subagent-outcome
+           #:reasoning-encrypted-subtype
+           #:reasoning-encrypted-entity-id
+           #:reasoning-encrypted-value
+           #:thinking-title
+           #:ag-ui-event-subagent-run-id
+           #:raw-event-payload
+           #:raw-event-source
+           #:custom-event-name
+           #:custom-event-value
+           #:unknown-ag-ui-event-table
+           ;; chunk expansion
+           #:chunk-expander
+           #:make-chunk-expander
+           #:expand-chunk
+           #:finish-chunks
+           #:expand-ag-ui-chunks
            ;; input / messages
            #:run-agent-input
            #:run-agent-input-thread-id
@@ -79,7 +148,122 @@
            #:run-agent-input-tools
            #:run-agent-input-context
            #:run-agent-input-forwarded-props
+           #:run-agent-input-resume
            #:make-run-agent-input
+           ;; interrupts
+           #:interrupt
+           #:interrupt-id
+           #:interrupt-reason
+           #:interrupt-message
+           #:interrupt-tool-call-id
+           #:interrupt-response-schema
+           #:interrupt-expires-at
+           #:interrupt-metadata
+           #:interrupt-subagent-run-id
+           #:make-interrupt
+           #:resume-entry
+           #:resume-interrupt-id
+           #:resume-status
+           #:resume-payload
+           #:resume-metadata
+           #:make-resume-entry
+           #:run-outcome
+           #:run-outcome-type
+           #:run-success-outcome
+           #:run-interrupt-outcome
+           #:outcome-interrupts
+           #:make-run-success-outcome
+           #:make-run-interrupt-outcome
+           #:make-run-interrupted-event
+           #:run-finished-outcome
+           #:open-interrupts
+           #:run-interrupted-p
+           #:ag-ui-resume-error
+           #:ag-ui-resume-error-rule
+           #:validate-resume
+           #:validate-resume-input
+           #:resume-approved-p
+           #:resume-edited-args
+           #:interrupt-expired-p
+           #:parse-iso8601
+           ;; capabilities (discovery only — no negotiation)
+           #:agent-capabilities
+           #:make-agent-capabilities
+           #:get-capabilities
+           #:encode-agent-capabilities
+           #:decode-agent-capabilities
+           #:identity-capabilities
+           #:transport-capabilities
+           #:tools-capabilities
+           #:output-capabilities
+           #:state-capabilities
+           #:multi-agent-capabilities
+           #:sub-agent-descriptor
+           #:reasoning-capabilities
+           #:multimodal-capabilities
+           #:multimodal-input-capabilities
+           #:multimodal-output-capabilities
+           #:execution-capabilities
+           #:human-in-the-loop-capabilities
+           #:capabilities-identity
+           #:capabilities-transport
+           #:capabilities-tools
+           #:capabilities-output
+           #:capabilities-state
+           #:capabilities-multi-agent
+           #:capabilities-reasoning
+           #:capabilities-multimodal
+           #:capabilities-execution
+           #:capabilities-human-in-the-loop
+           #:capabilities-custom
+           #:identity-name
+           #:identity-type
+           #:identity-description
+           #:identity-version
+           #:identity-provider
+           #:identity-documentation-url
+           #:identity-metadata
+           #:transport-streaming-p
+           #:transport-websocket-p
+           #:transport-http-binary-p
+           #:transport-push-notifications-p
+           #:transport-resumable-p
+           #:tools-supported-p
+           #:tools-items
+           #:tools-parallel-calls-p
+           #:tools-client-provided-p
+           #:output-structured-output-p
+           #:output-mime-types
+           #:state-snapshots-p
+           #:state-deltas-p
+           #:state-memory-p
+           #:state-persistent-p
+           #:multi-agent-supported-p
+           #:multi-agent-delegation-p
+           #:multi-agent-handoffs-p
+           #:multi-agent-sub-agents
+           #:sub-agent-name
+           #:sub-agent-description
+           #:reasoning-supported-p
+           #:reasoning-streaming-p
+           #:reasoning-encrypted-p
+           #:multimodal-input
+           #:multimodal-output
+           #:multimodal-image-p
+           #:multimodal-audio-p
+           #:multimodal-video-p
+           #:multimodal-pdf-p
+           #:multimodal-file-p
+           #:execution-code-execution-p
+           #:execution-sandboxed-p
+           #:execution-max-iterations
+           #:execution-max-time
+           #:hitl-supported-p
+           #:hitl-approvals-p
+           #:hitl-interventions-p
+           #:hitl-feedback-p
+           #:hitl-interrupts-p
+           #:hitl-approve-with-edits-p
            #:ag-ui-message
            #:ag-ui-message-id
            #:ag-ui-message-role
@@ -87,6 +271,9 @@
            #:ag-ui-message-name
            #:ag-ui-message-tool-call-id
            #:ag-ui-message-tool-calls
+           #:ag-ui-message-activity-type
+           #:ag-ui-message-error
+           #:ag-ui-message-encrypted-value
            #:make-ag-ui-message
            #:ag-ui-tool
            #:ag-ui-tool-name
@@ -100,6 +287,7 @@
            ;; json
            #:json-object
            #:param
+           #:event-field
            #:encode-json
            #:decode-json
            #:encode-run-agent-input
@@ -110,8 +298,15 @@
            ;; codec
            #:encode-ag-ui-event
            #:decode-ag-ui-event
+           #:known-event-type-p
            #:encode-ag-ui-sse
            #:decode-ag-ui-sse-stream
+           #:encode-ag-ui-framed
+           #:decode-ag-ui-framed
+           #:map-ag-ui-framed
+           #:+ag-ui-sse-media-type+
+           #:+ag-ui-proto-media-type+
+           #:negotiate-ag-ui-format
            ;; agent / serve
            #:ag-ui-agent
            #:ag-ui-agent-name
@@ -123,6 +318,8 @@
            #:run-agent
            #:serve-ag-ui
            #:make-ag-ui-app
-           #:last-user-text))
+           #:last-user-text
+           #:*ag-ui-emit*
+           #:ag-ui-emit))
 
 (in-package #:ag-ui-protocol)
