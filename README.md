@@ -44,8 +44,13 @@ JSON Schema emit/validate (tool `parameters`, incoming events) is
 [`schema-protocol-json`](https://github.com/egao1980/schema-protocol-json).
 
 Bindings: [`ag-ui-backend-sse`](https://github.com/egao1980/ag-ui-backend-sse)
-(default), [`ag-ui-backend-protobuf`](https://github.com/egao1980/ag-ui-backend-protobuf)
-(`:format :protobuf` = JSON UTF-8 octets until the official Event proto is compiled).
+(default), [`ag-ui-backend-protobuf`](https://github.com/egao1980/ag-ui-backend-protobuf).
+
+`:format :protobuf` is JSON-as-WKT (`google.protobuf.Value` via serdes `:wkt`),
+length-prefixed under `application/vnd.ag-ui.event+proto`. That is **not** the
+official `Event` oneof — unknown event types survive as tables. `make-ag-ui-app`
+negotiates `Accept`: proto media type → binary; otherwise SSE. GET on the
+agent path returns `AgentCapabilities`.
 
 Part of [cl-stack](https://github.com/egao1980/cl-stack) agent-wire
 ([brief](https://github.com/egao1980/cl-stack/blob/main/docs/capabilities/ag-ui.md)).

@@ -106,14 +106,38 @@
                (ag-ui-protocol:ag-ui-context-value
                 (aref (ag-ui-protocol:run-agent-input-context decoded) 0))))))
 
-(deftest protobuf-is-json-octets
+(deftest protobuf-is-wkt-value
   (let* ((ev (ag-ui-protocol:make-text-message-content-event
               :message-id "m" :delta "hi"))
          (octets (ag-ui-protocol:encode-ag-ui-event ev :format :protobuf))
          (back (ag-ui-protocol:decode-ag-ui-event octets :format :protobuf)))
     (ok (vectorp octets))
     (ng (stringp octets))
-    (ok (equal "hi" (ag-ui-protocol:text-message-delta back)))))
+    (ok (equal "hi" (ag-ui-protocol:text-message-delta back)))
+    ;; Not a JSON string in an octet bag — WKT Value does not start with #\{.
+    (ng (eql (aref octets 0) #.(char-code #\{)))))
+
+(deftest protobuf-framed-roundtrip
+  (let* ((events (list (ag-ui-protocol:make-run-started-event :thread-id "t" :run-id "r")
+                       (ag-ui-protocol:make-text-message-content-event
+                        :message-id "m" :delta "hi")
+                       (ag-ui-protocol:make-run-finished-event :thread-id "t" :run-id "r")))
+         (octets (apply #'concatenate '(vector (unsigned-byte 8))
+                        (mapcar #'ag-ui-protocol:encode-ag-ui-framed events)))
+         (back (ag-ui-protocol:decode-ag-ui-framed octets)))
+    (ok (= 3 (length back)))
+    (ok (equal "hi" (ag-ui-protocol:text-message-delta (second back))))))
+
+(deftest protobuf-unknown-event-survives-wkt
+  (let* ((ev (ag-ui-protocol:decode-ag-ui-event
+              "{\"type\":\"NOT_A_REAL_EVENT\",\"messageId\":\"x\"}"))
+         (back (ag-ui-protocol:decode-ag-ui-event
+                (ag-ui-protocol:encode-ag-ui-event ev :format :protobuf)
+                :format :protobuf)))
+    (ok (typep back 'ag-ui-protocol:unknown-ag-ui-event))
+    (ok (equal "NOT_A_REAL_EVENT" (ag-ui-protocol:ag-ui-event-type back)))
+    (ok (equal "x" (gethash "messageId"
+                            (ag-ui-protocol:unknown-ag-ui-event-table back))))))
 
 (deftest unknown-type-is-tolerated
   ;; A producer on a newer spec revision must not break the stream.
@@ -582,8 +606,49 @@
 (deftest clack-app-404
   (let ((app (ag-ui-protocol:make-ag-ui-app (ag-ui-protocol:make-ag-ui-agent)
                                            :path "/run")))
-    (ok (= 404 (first (funcall app (list :request-method :get :path-info "/run")))))
     (ok (= 404 (first (funcall app (list :request-method :post :path-info "/")))))))
+
+(deftest clack-get-returns-capabilities
+  (let* ((app (ag-ui-protocol:make-ag-ui-app
+               (ag-ui-protocol:make-ag-ui-agent :name "desk")
+               :path "/run"))
+         (res (funcall app (list :request-method :get :path-info "/run")))
+         (caps (ag-ui-protocol:decode-agent-capabilities (first (third res)))))
+    (ok (= 200 (first res)))
+    (ok (equal "desk" (ag-ui-protocol:identity-name
+                       (ag-ui-protocol:capabilities-identity caps))))
+    (ok (ag-ui-protocol:transport-streaming-p
+         (ag-ui-protocol:capabilities-transport caps)))))
+
+(deftest accept-defaults-to-sse
+  (ok (eq :json (ag-ui-protocol:negotiate-ag-ui-format nil)))
+  (ok (eq :json (ag-ui-protocol:negotiate-ag-ui-format "*/*")))
+  (ok (eq :json (ag-ui-protocol:negotiate-ag-ui-format "text/event-stream")))
+  (ok (eq :protobuf
+          (ag-ui-protocol:negotiate-ag-ui-format
+           "application/vnd.ag-ui.event+proto")))
+  (ok (null (ag-ui-protocol:negotiate-ag-ui-format "application/json"))))
+
+(deftest accept-protobuf-roundtrip
+  (let* ((app (ag-ui-protocol:make-ag-ui-app (ag-ui-protocol:make-ag-ui-agent)))
+         (headers (let ((h (make-hash-table :test 'equal)))
+                    (setf (gethash "accept" h) "application/vnd.ag-ui.event+proto")
+                    h))
+         (body (ag-ui-protocol:encode-json
+                (ag-ui-protocol:encode-run-agent-input
+                 (ag-ui-protocol:make-run-agent-input
+                  :thread-id "t" :run-id "r"
+                  :messages (list (ag-ui-protocol:make-ag-ui-message
+                                   :role "user" :content "pb"))))))
+         (res (funcall app (list :request-method :post
+                                 :path-info "/"
+                                 :headers headers
+                                 :raw-body body)))
+         (events (ag-ui-protocol:decode-ag-ui-framed (first (third res)))))
+    (ok (= 200 (first res)))
+    (ok (search "vnd.ag-ui.event+proto"
+                (getf (second res) :content-type)))
+    (ok (equal "pb" (ag-ui-protocol:text-message-delta (third events))))))
 
 (deftest sse-encode-has-data-line
   (let ((wire (ag-ui-protocol:encode-ag-ui-sse

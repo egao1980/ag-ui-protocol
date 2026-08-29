@@ -186,6 +186,84 @@
            #:resume-edited-args
            #:interrupt-expired-p
            #:parse-iso8601
+           ;; capabilities (discovery only — no negotiation)
+           #:agent-capabilities
+           #:make-agent-capabilities
+           #:get-capabilities
+           #:encode-agent-capabilities
+           #:decode-agent-capabilities
+           #:identity-capabilities
+           #:transport-capabilities
+           #:tools-capabilities
+           #:output-capabilities
+           #:state-capabilities
+           #:multi-agent-capabilities
+           #:sub-agent-descriptor
+           #:reasoning-capabilities
+           #:multimodal-capabilities
+           #:multimodal-input-capabilities
+           #:multimodal-output-capabilities
+           #:execution-capabilities
+           #:human-in-the-loop-capabilities
+           #:capabilities-identity
+           #:capabilities-transport
+           #:capabilities-tools
+           #:capabilities-output
+           #:capabilities-state
+           #:capabilities-multi-agent
+           #:capabilities-reasoning
+           #:capabilities-multimodal
+           #:capabilities-execution
+           #:capabilities-human-in-the-loop
+           #:capabilities-custom
+           #:identity-name
+           #:identity-type
+           #:identity-description
+           #:identity-version
+           #:identity-provider
+           #:identity-documentation-url
+           #:identity-metadata
+           #:transport-streaming-p
+           #:transport-websocket-p
+           #:transport-http-binary-p
+           #:transport-push-notifications-p
+           #:transport-resumable-p
+           #:tools-supported-p
+           #:tools-items
+           #:tools-parallel-calls-p
+           #:tools-client-provided-p
+           #:output-structured-output-p
+           #:output-mime-types
+           #:state-snapshots-p
+           #:state-deltas-p
+           #:state-memory-p
+           #:state-persistent-p
+           #:multi-agent-supported-p
+           #:multi-agent-delegation-p
+           #:multi-agent-handoffs-p
+           #:multi-agent-sub-agents
+           #:sub-agent-name
+           #:sub-agent-description
+           #:reasoning-supported-p
+           #:reasoning-streaming-p
+           #:reasoning-encrypted-p
+           #:multimodal-input
+           #:multimodal-output
+           #:multimodal-image-p
+           #:multimodal-audio-p
+           #:multimodal-video-p
+           #:multimodal-pdf-p
+           #:multimodal-file-p
+           #:execution-code-execution-p
+           #:execution-sandboxed-p
+           #:execution-max-iterations
+           #:execution-max-time
+           #:hitl-supported-p
+           #:hitl-approvals-p
+           #:hitl-interventions-p
+           #:hitl-feedback-p
+           #:hitl-interrupts-p
+           #:hitl-approve-with-edits-p
            #:ag-ui-message
            #:ag-ui-message-id
            #:ag-ui-message-role
@@ -223,6 +301,12 @@
            #:known-event-type-p
            #:encode-ag-ui-sse
            #:decode-ag-ui-sse-stream
+           #:encode-ag-ui-framed
+           #:decode-ag-ui-framed
+           #:map-ag-ui-framed
+           #:+ag-ui-sse-media-type+
+           #:+ag-ui-proto-media-type+
+           #:negotiate-ag-ui-format
            ;; agent / serve
            #:ag-ui-agent
            #:ag-ui-agent-name

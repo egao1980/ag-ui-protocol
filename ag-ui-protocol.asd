@@ -1,9 +1,9 @@
 (defsystem "ag-ui-protocol"
-  :version "0.2.1"
+  :version "0.3.0"
   :description "CLOS AG-UI protocol — typed agent↔UI events (not JSON-RPC)"
   :author "egao1980"
   :license "MIT"
-  :depends-on ("yason" "babel" "sse-protocol"
+  :depends-on ("yason" "babel" "sse-protocol" "serdes-protocol"
                "schema-protocol" "schema-protocol-json")
   :properties (:cl-repo (:ci (:with ("dissect"))))
   :serial t
@@ -15,6 +15,7 @@
                (:file "events")
                (:file "chunks")
                (:file "interrupts")
+               (:file "capabilities")
                (:file "protocol"))
   :in-order-to ((test-op (test-op "ag-ui-protocol/tests"))))
 
@@ -34,8 +35,24 @@
                (:file "apply"))
   :in-order-to ((test-op (test-op "ag-ui-protocol/tests"))))
 
+;;; Optional bridge to capability-protocol. Separate so a wire-protocol consumer
+;;; does not pull in blackboard-protocol; same shape as llm-protocol/capability.
+(defsystem "ag-ui-protocol/capability"
+  :version "0.1.0"
+  :description "capability-protocol ↔ AG-UI AgentCapabilities adapters"
+  :author "egao1980"
+  :license "MIT"
+  :depends-on ("ag-ui-protocol" "capability-protocol")
+  :serial t
+  :pathname "capability"
+  :components ((:file "package")
+               (:file "adapter"))
+  :in-order-to ((test-op (test-op "ag-ui-protocol/tests"))))
+
 (defsystem "ag-ui-protocol/tests"
-  :depends-on ("ag-ui-protocol" "ag-ui-protocol/client" "rove")
+  :depends-on ("ag-ui-protocol" "ag-ui-protocol/client"
+               "ag-ui-protocol/capability"
+               "protobuf-backend-cl-protobufs" "rove")
   :pathname "tests"
   :serial t
   :components ((:file "package")

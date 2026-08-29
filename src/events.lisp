@@ -2,33 +2,48 @@
 
 ;;; Official field names: https://docs.ag-ui.com/concepts/events
 ;;; Shape lives in schema-protocol; JSON Schema emit/validate in schema-protocol-json.
+;;;
+;;; :protobuf is JSON-as-WKT (google.protobuf.Value) via serdes :wkt — not the
+;;; official Event oneof. Unknown events survive because the payload is the
+;;; dump table. Load protobuf-backend-cl-protobufs to register the format.
 
-(defun %encode-payload (json format)
+(defun %wkt-available-p ()
+  (not (null (serdes-protocol:find-backend :wkt nil))))
+
+(defun %ensure-wkt ()
+  (unless (%wkt-available-p)
+    (error 'ag-ui-error
+           :message "protobuf format needs serdes :wkt — load protobuf-backend-cl-protobufs")))
+
+(defun %event-json (event)
+  (if (typep event 'unknown-ag-ui-event)
+      (or (unknown-ag-ui-event-table event) (stack-schema:dump event))
+      (stack-schema:dump event)))
+
+(defun %encode-payload (table format)
   (ecase format
-    (:json json)
-    (:protobuf (babel:string-to-octets json :encoding :utf-8))))
+    (:json (encode-json table))
+    (:protobuf
+     (%ensure-wkt)
+     (serdes-protocol:encode table :format :wkt))))
 
 (defun %event-table (source format)
   (cond
     ((hash-table-p source) source)
     ((eq format :protobuf)
-     (decode-json
+     (%ensure-wkt)
+     (serdes-protocol:decode
       (if (and (vectorp source) (not (stringp source)))
-          (babel:octets-to-string source :encoding :utf-8)
-          (%source-string source))))
+          source
+          (error 'ag-ui-error
+                 :message "protobuf decode needs an octet vector"))
+      :format :wkt))
     (t (decode-json (%source-string source)))))
 
 (defgeneric encode-ag-ui-event (event &key format)
-  (:documentation "Encode EVENT. :json → string; :protobuf → UTF-8 octets of the JSON
-   (official Event proto is not compiled yet — same payload, different container).")
+  (:documentation "Encode EVENT. :json → string; :protobuf → WKT Value octets.")
   (:method ((event ag-ui-event) &key (format :json))
-    (%encode-payload (encode-json (stack-schema:dump event)) format))
-  (:method ((event unknown-ag-ui-event) &key (format :json))
-    ;; Forward the source table verbatim: a relay must not silently drop fields
-    ;; of an event type it does not model.
-    (%encode-payload (encode-json (or (unknown-ag-ui-event-table event)
-                                      (stack-schema:dump event)))
-                     format)))
+    (%encode-payload (%event-json event) format)))
 
 (defun known-event-type-p (type)
   "Does this build model TYPE? Derived from AG-UI-EVENT's declared :tag variants."
@@ -57,24 +72,26 @@
                         (and (numberp ts) ts)))))))
 
 (defun encode-ag-ui-sse (event &key (format :json))
-  "WHATWG `data: {json}\\n\\n` (or UTF-8 JSON octets as data for :protobuf)."
+  "WHATWG `data: {json}\\n\\n`. FORMAT must be :json — binary is not SSE."
+  (unless (eq format :json)
+    (error 'ag-ui-error
+           :message "encode-ag-ui-sse is JSON-only; use encode-ag-ui-framed for protobuf"))
   (sse-protocol:encode-sse-event
    (sse-protocol:make-sse-event
-    :data (if (eq format :json)
-              (encode-ag-ui-event event :format :json)
-              (babel:octets-to-string
-               (encode-ag-ui-event event :format :protobuf)
-               :encoding :utf-8)))))
+    :data (encode-ag-ui-event event :format :json))))
 
 (defun decode-ag-ui-sse-stream (source &key (format :json) on-event)
   "Parse an event-stream of AG-UI JSON events. Returns a list of CLOS events.
    SOURCE may be a stream or a string. ON-EVENT fires as each event is read."
+  (unless (eq format :json)
+    (error 'ag-ui-error
+           :message "decode-ag-ui-sse-stream is JSON-only; use decode-ag-ui-framed"))
   (flet ((collect (src)
            (let ((out '()))
              (sse-protocol:map-sse-events
               (lambda (ev)
                 (let ((decoded (decode-ag-ui-event (sse-protocol:sse-event-data ev)
-                                                   :format format)))
+                                                   :format :json)))
                   (when on-event (funcall on-event decoded))
                   (push decoded out)))
               src)
@@ -83,3 +100,49 @@
         (with-input-from-string (s source)
           (collect s))
         (collect source))))
+
+(defun %write-u32be (vector index n)
+  (setf (aref vector index) (ldb (byte 8 24) n)
+        (aref vector (+ index 1)) (ldb (byte 8 16) n)
+        (aref vector (+ index 2)) (ldb (byte 8 8) n)
+        (aref vector (+ index 3)) (ldb (byte 8 0) n)))
+
+(defun %read-u32be (vector index)
+  (logior (ash (aref vector index) 24)
+          (ash (aref vector (+ index 1)) 16)
+          (ash (aref vector (+ index 2)) 8)
+          (aref vector (+ index 3))))
+
+(defun encode-ag-ui-framed (event)
+  "One length-prefixed WKT Value (big-endian uint32 + protobuf octets)."
+  (let* ((payload (encode-ag-ui-event event :format :protobuf))
+         (out (make-array (+ 4 (length payload)) :element-type '(unsigned-byte 8))))
+    (%write-u32be out 0 (length payload))
+    (replace out payload :start1 4)
+    out))
+
+(defun map-ag-ui-framed (function octets)
+  "Call FUNCTION with each decoded event from length-prefixed OCTETS."
+  (let ((i 0)
+        (n (length octets)))
+    (loop while (< i n)
+          do (when (> (+ i 4) n)
+               (error 'ag-ui-error :message "truncated protobuf length prefix"))
+             (let ((len (%read-u32be octets i)))
+               (incf i 4)
+               (when (> (+ i len) n)
+                 (error 'ag-ui-error :message "truncated protobuf event"))
+               (funcall function
+                        (decode-ag-ui-event (subseq octets i (+ i len))
+                                            :format :protobuf))
+               (incf i len))))
+  (values))
+
+(defun decode-ag-ui-framed (octets &key on-event)
+  "Decode a length-prefixed protobuf event stream to a list of CLOS events."
+  (let ((out '()))
+    (map-ag-ui-framed (lambda (ev)
+                        (when on-event (funcall on-event ev))
+                        (push ev out))
+                      octets)
+    (nreverse out)))

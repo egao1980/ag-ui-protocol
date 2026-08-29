@@ -260,6 +260,81 @@
     (ok (equal "int-1" (ag-ui-protocol:interrupt-id
                         (first (ag-ui-client:agent-state-interrupts paused)))))))
 
+;;; Capabilities
+
+(deftest capabilities-omit-what-is-not-declared
+  ;; Tri-state is the whole point: absent must not become false on the wire.
+  (let* ((caps (ag-ui-protocol:make-agent-capabilities
+                :transport (make-instance 'ag-ui-protocol:transport-capabilities
+                                          :streaming t)))
+         (json (ag-ui-protocol:decode-json
+                (ag-ui-protocol:encode-json
+                 (ag-ui-protocol:encode-agent-capabilities caps)))))
+    (ok (gethash "streaming" (gethash "transport" json)))
+    (ng (nth-value 1 (gethash "tools" json)))
+    (ng (nth-value 1 (gethash "websocket" (gethash "transport" json))))))
+
+(deftest capabilities-roundtrip
+  (let* ((caps (ag-ui-protocol:make-agent-capabilities
+                :identity (make-instance 'ag-ui-protocol:identity-capabilities
+                                         :name "desk" :version "1.2.0")
+                :human-in-the-loop (make-instance
+                                    'ag-ui-protocol:human-in-the-loop-capabilities
+                                    :interrupts t :approve-with-edits t)
+                :execution (make-instance 'ag-ui-protocol:execution-capabilities
+                                          :max-iterations 12)))
+         (back (ag-ui-protocol:decode-agent-capabilities
+                (ag-ui-protocol:encode-json
+                 (ag-ui-protocol:encode-agent-capabilities caps)))))
+    (ok (equal "desk" (ag-ui-protocol:identity-name
+                       (ag-ui-protocol:capabilities-identity back))))
+    (ok (equal "1.2.0" (ag-ui-protocol:identity-version
+                        (ag-ui-protocol:capabilities-identity back))))
+    (ok (ag-ui-protocol:hitl-interrupts-p
+         (ag-ui-protocol:capabilities-human-in-the-loop back)))
+    (ok (eql 12 (ag-ui-protocol:execution-max-iterations
+                 (ag-ui-protocol:capabilities-execution back))))))
+
+(deftest bare-agent-declares-only-what-it-knows
+  (let ((caps (ag-ui-protocol:get-capabilities
+               (ag-ui-protocol:make-ag-ui-agent :name "demo"))))
+    (ok (equal "demo" (ag-ui-protocol:identity-name
+                       (ag-ui-protocol:capabilities-identity caps))))
+    (ok (ag-ui-protocol:transport-streaming-p
+         (ag-ui-protocol:capabilities-transport caps)))
+    ;; It has no tools and no opinion about them, so it claims neither.
+    (ng (ag-ui-protocol:capabilities-tools caps))))
+
+(deftest capability-catalogue-bridge-round-trips
+  ;; A catalogue of markers derives a document; the document registers markers.
+  (let ((catalogue (capability-protocol:make-catalogue :llm)))
+    (capability-protocol:register-capability
+     catalogue (make-instance 'capability-protocol:llm-tools-capability))
+    (capability-protocol:register-capability
+     catalogue (make-instance 'capability-protocol:llm-thinking-capability))
+    (capability-protocol:register-capability
+     catalogue (make-instance 'capability-protocol:llm-vision-capability))
+    (let ((caps (ag-ui-protocol/capability:capabilities-from-catalogue catalogue)))
+      (ok (ag-ui-protocol:tools-supported-p (ag-ui-protocol:capabilities-tools caps)))
+      (ok (ag-ui-protocol:reasoning-supported-p
+           (ag-ui-protocol:capabilities-reasoning caps)))
+      (ok (ag-ui-protocol:multimodal-image-p
+           (ag-ui-protocol:multimodal-input
+            (ag-ui-protocol:capabilities-multimodal caps))))
+      ;; Nothing said about audio, so the field stays absent rather than false.
+      (ng (ag-ui-protocol:multimodal-audio-p
+           (ag-ui-protocol:multimodal-input
+            (ag-ui-protocol:capabilities-multimodal caps))))
+      ;; ...and back in: a remote agent becomes queryable like a local backend.
+      (let* ((remote (capability-protocol:make-catalogue :llm))
+             (names (ag-ui-protocol/capability:register-agent-capabilities
+                     remote caps)))
+        (ok (member :llm-tools names))
+        (ok (member :llm-vision names))
+        (ok (capability-protocol:capability-supported-p remote :llm-tools))
+        (ok (capability-protocol:capability-supported-p remote :llm-thinking))
+        (ng (capability-protocol:capability-supported-p remote :llm-audio))))))
+
 (deftest reduced-messages-feed-back-as-input
   ;; The round trip that makes the reducer worth having: fold a run, hand the
   ;; messages straight back as the next turn's input.
