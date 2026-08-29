@@ -27,7 +27,13 @@ Clack app (no HTTP server required to test):
 ;; POST /  Content-Type: application/json  →  text/event-stream
 ```
 
+`decode-ag-ui-event` tolerates event types this build does not model — they
+decode to `unknown-ag-ui-event`, which keeps the source table and re-encodes
+verbatim, so one new event from a newer producer cannot abort a run. Pass
+`:strict t` to signal instead. `validate-ag-ui-json` stays strict.
+
 Models are [`schema-protocol`](https://github.com/egao1980/schema-protocol) (`defschema`, `:tag type`).
+`ag-ui-event` lists its variants explicitly; a new wire event is registered there.
 JSON Schema emit/validate (tool `parameters`, incoming events) is
 [`schema-protocol-json`](https://github.com/egao1980/schema-protocol-json).
 

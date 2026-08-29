@@ -46,12 +46,24 @@
   (:key-style :camel)
   (:extra :allow))
 
+;;; Variants are listed explicitly rather than discovered from subclasses so
+;;; UNKNOWN-AG-UI-EVENT — which accepts any `type` — can subclass AG-UI-EVENT
+;;; for dispatch without shadowing a real variant during tag resolution.
+;;; Adding a wire event means adding it here.
 (stack-schema:defschema ag-ui-event ()
   (event-type string :key "type" :accessor ag-ui-event-type)
   (timestamp number :optional t :accessor ag-ui-event-timestamp)
   (raw-event t :optional t :accessor ag-ui-event-raw-event)
   (metadata hash-table :optional t :accessor ag-ui-event-metadata)
-  (:tag event-type)
+  (:tag event-type
+        run-started-event run-finished-event run-error-event
+        step-started-event step-finished-event
+        text-message-start-event text-message-content-event
+        text-message-end-event
+        tool-call-start-event tool-call-args-event tool-call-end-event
+        tool-call-result-event
+        state-snapshot-event state-delta-event messages-snapshot-event
+        raw-event custom-event)
   (:key-style :camel)
   (:extra :allow))
 
@@ -162,6 +174,37 @@
   (:key-style :camel)
   (:extra :allow))
 
+;;; RAW and CUSTOM are the spec's designated extension points: RAW wraps a
+;;; foreign system's event verbatim, CUSTOM carries an application-defined one.
+;;; The RAW-EVENT class is the wire event of type "RAW"; AG-UI-EVENT-RAW-EVENT
+;;; is the unrelated `rawEvent` provenance field every event may carry.
+
+(stack-schema:defschema raw-event (ag-ui-event)
+  (event-type (eql "RAW") :default "RAW" :key "type")
+  (event t :accessor raw-event-payload)
+  (source string :optional t :accessor raw-event-source)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema custom-event (ag-ui-event)
+  (event-type (eql "CUSTOM") :default "CUSTOM" :key "type")
+  (name string :accessor custom-event-name)
+  (value t :optional t :accessor custom-event-value)
+  (:key-style :camel)
+  (:extra :allow))
+
+;;; Forward compatibility. A producer on a newer spec revision may send event
+;;; types this build does not model; the spec requires consumers to tolerate
+;;; them rather than fail the stream. DECODE-AG-UI-EVENT parks those here with
+;;; the source table intact so ENCODE-AG-UI-EVENT can forward them byte-faithful.
+;;; Deliberately absent from AG-UI-EVENT's :tag variants — it is never matched
+;;; by tag resolution, only constructed explicitly.
+(stack-schema:defschema unknown-ag-ui-event (ag-ui-event)
+  (raw-table hash-table :optional t :wire nil :dump nil
+             :accessor unknown-ag-ui-event-table)
+  (:key-style :camel)
+  (:extra :allow))
+
 (defclass ag-ui-agent ()
   ((name :initarg :name :initform "agent" :accessor ag-ui-agent-name)
    (handler :initarg :handler :initform nil :accessor ag-ui-agent-handler)))
@@ -262,3 +305,15 @@
   (%make 'messages-snapshot-event :event-type "MESSAGES_SNAPSHOT"
          :messages (if (listp messages) (coerce messages 'vector) messages)
          :timestamp timestamp))
+
+(defun make-raw-event (&key event source timestamp)
+  (%make 'raw-event :event-type "RAW"
+         :event event :source source :timestamp timestamp))
+
+(defun make-custom-event (&key name value timestamp)
+  (%make 'custom-event :event-type "CUSTOM"
+         :name name :value value :timestamp timestamp))
+
+(defun make-unknown-ag-ui-event (&key event-type raw-table timestamp)
+  (%make 'unknown-ag-ui-event :event-type event-type
+         :raw-table raw-table :timestamp timestamp))

@@ -115,10 +115,60 @@
     (ng (stringp octets))
     (ok (equal "hi" (ag-ui-protocol:text-message-delta back)))))
 
-(deftest unknown-type-errors
+(deftest unknown-type-is-tolerated
+  ;; A producer on a newer spec revision must not break the stream.
+  (let ((ev (ag-ui-protocol:decode-ag-ui-event
+             "{\"type\":\"NOT_A_REAL_EVENT\",\"messageId\":\"x\"}")))
+    (ok (typep ev 'ag-ui-protocol:unknown-ag-ui-event))
+    (ok (typep ev 'ag-ui-protocol:ag-ui-event))
+    (ok (equal "NOT_A_REAL_EVENT" (ag-ui-protocol:ag-ui-event-type ev)))
+    (ng (ag-ui-protocol:known-event-type-p "NOT_A_REAL_EVENT"))
+    (ok (ag-ui-protocol:known-event-type-p "RUN_STARTED"))))
+
+(deftest unknown-type-round-trips-verbatim
+  (let* ((wire "{\"type\":\"NOT_A_REAL_EVENT\",\"messageId\":\"x\",\"nested\":{\"a\":[1,2]}}")
+         (back (ag-ui-protocol:decode-json
+                (ag-ui-protocol:encode-ag-ui-event
+                 (ag-ui-protocol:decode-ag-ui-event wire)))))
+    (ok (equal "NOT_A_REAL_EVENT" (gethash "type" back)))
+    (ok (equal "x" (gethash "messageId" back)))
+    (ok (equal 1 (aref (gethash "a" (gethash "nested" back)) 0)))))
+
+(deftest unknown-type-strict-still-signals
   (ok (signals (ag-ui-protocol:decode-ag-ui-event
-                "{\"type\":\"REASONING_START\",\"messageId\":\"x\"}")
+                "{\"type\":\"NOT_A_REAL_EVENT\"}" :strict t)
                'ag-ui-protocol:ag-ui-error)))
+
+(deftest unknown-type-survives-sse-stream
+  ;; The decisive case: one unmodelled event must not abort the surrounding run.
+  (let ((events (ag-ui-protocol:decode-ag-ui-sse-stream
+                 (concatenate
+                  'string
+                  "data: {\"type\":\"RUN_STARTED\",\"threadId\":\"t\",\"runId\":\"r\"}"
+                  (string #\Newline) (string #\Newline)
+                  "data: {\"type\":\"NOT_A_REAL_EVENT\",\"x\":1}"
+                  (string #\Newline) (string #\Newline)
+                  "data: {\"type\":\"RUN_FINISHED\",\"threadId\":\"t\",\"runId\":\"r\"}"
+                  (string #\Newline) (string #\Newline)))))
+    (ok (= 3 (length events)))
+    (ok (equal '("RUN_STARTED" "NOT_A_REAL_EVENT" "RUN_FINISHED")
+               (mapcar #'ag-ui-protocol:ag-ui-event-type events)))
+    (ok (typep (second events) 'ag-ui-protocol:unknown-ag-ui-event))
+    (ok (typep (third events) 'ag-ui-protocol:run-finished-event))))
+
+(deftest raw-and-custom-events
+  (let ((raw (%roundtrip (ag-ui-protocol:make-raw-event
+                          :event (ag-ui-protocol:json-object "kind" "foreign")
+                          :source "langgraph")))
+        (custom (%roundtrip (ag-ui-protocol:make-custom-event
+                             :name "thumbs_up" :value 1))))
+    (ok (typep raw 'ag-ui-protocol:raw-event))
+    (ok (equal "RAW" (ag-ui-protocol:ag-ui-event-type raw)))
+    (ok (equal "langgraph" (ag-ui-protocol:raw-event-source raw)))
+    (ok (equal "foreign" (gethash "kind" (ag-ui-protocol:raw-event-payload raw))))
+    (ok (typep custom 'ag-ui-protocol:custom-event))
+    (ok (equal "thumbs_up" (ag-ui-protocol:custom-event-name custom)))
+    (ok (equal 1 (ag-ui-protocol:custom-event-value custom)))))
 
 (deftest echo-handler-sequence
   (let* ((agent (ag-ui-protocol:make-ag-ui-agent))
@@ -213,8 +263,10 @@
              "{\"type\":\"RUN_STARTED\",\"threadId\":\"thread_123\",\"runId\":\"run_456\"}")))
     (ok (typep ev 'ag-ui-protocol:run-started-event))
     (ok (equal "thread_123" (ag-ui-protocol:run-started-thread-id ev))))
+  ;; VALIDATE-AG-UI-JSON stays strict — it is the opt-in checking path, unlike
+  ;; DECODE-AG-UI-EVENT which must tolerate unmodelled types off the wire.
   (ok (signals (ag-ui-protocol:validate-ag-ui-json
-                "{\"type\":\"REASONING_START\",\"messageId\":\"x\"}")
+                "{\"type\":\"NOT_A_REAL_EVENT\",\"messageId\":\"x\"}")
                'ag-ui-protocol:ag-ui-error)))
 
 (deftest validate-tool-arguments-json-schema

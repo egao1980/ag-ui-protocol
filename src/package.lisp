@@ -32,6 +32,9 @@
            #:state-snapshot-event
            #:state-delta-event
            #:messages-snapshot-event
+           #:raw-event
+           #:custom-event
+           #:unknown-ag-ui-event
            #:make-run-started-event
            #:make-run-finished-event
            #:make-run-error-event
@@ -47,6 +50,9 @@
            #:make-state-snapshot-event
            #:make-state-delta-event
            #:make-messages-snapshot-event
+           #:make-raw-event
+           #:make-custom-event
+           #:make-unknown-ag-ui-event
            #:run-started-thread-id
            #:run-started-run-id
            #:run-started-parent-run-id
@@ -69,6 +75,11 @@
            #:state-snapshot-value
            #:state-delta-patch
            #:messages-snapshot-messages
+           #:raw-event-payload
+           #:raw-event-source
+           #:custom-event-name
+           #:custom-event-value
+           #:unknown-ag-ui-event-table
            ;; input / messages
            #:run-agent-input
            #:run-agent-input-thread-id
@@ -110,6 +121,7 @@
            ;; codec
            #:encode-ag-ui-event
            #:decode-ag-ui-event
+           #:known-event-type-p
            #:encode-ag-ui-sse
            #:decode-ag-ui-sse-stream
            ;; agent / serve
