@@ -10,6 +10,17 @@
                when v
                  append (list k v))))
 
+(defun event-field (event slot-name)
+  "Value of SLOT-NAME on EVENT, or NIL when the field was omitted.
+
+   The inverse of %MAKE. Optional fields are deliberately left unbound so DUMP
+   omits them rather than emitting null, which makes a bare accessor call unsafe
+   on any field a producer may skip. Reducers and transforms should read
+   optional fields through this."
+  (and (slot-exists-p event slot-name)
+       (slot-boundp event slot-name)
+       (slot-value event slot-name)))
+
 (stack-schema:defschema ag-ui-message ()
   (id string :accessor ag-ui-message-id)
   (role string :accessor ag-ui-message-role)
@@ -50,19 +61,33 @@
 ;;; UNKNOWN-AG-UI-EVENT — which accepts any `type` — can subclass AG-UI-EVENT
 ;;; for dispatch without shadowing a real variant during tag resolution.
 ;;; Adding a wire event means adding it here.
+;;; SUBAGENT-RUN-ID sits on the base rather than being repeated on the ~25 events
+;;; that declare it upstream. It is optional everywhere, so DUMP omits it and the
+;;; wire is unchanged; the only divergence is accepting it on the deprecated
+;;; THINKING_* family, which upstream rejects — tolerant in, correct out.
 (stack-schema:defschema ag-ui-event ()
   (event-type string :key "type" :accessor ag-ui-event-type)
   (timestamp number :optional t :accessor ag-ui-event-timestamp)
   (raw-event t :optional t :accessor ag-ui-event-raw-event)
   (metadata hash-table :optional t :accessor ag-ui-event-metadata)
+  (subagent-run-id string :optional t :accessor ag-ui-event-subagent-run-id)
   (:tag event-type
         run-started-event run-finished-event run-error-event
         step-started-event step-finished-event
         text-message-start-event text-message-content-event
-        text-message-end-event
+        text-message-end-event text-message-chunk-event
         tool-call-start-event tool-call-args-event tool-call-end-event
-        tool-call-result-event
+        tool-call-result-event tool-call-chunk-event
         state-snapshot-event state-delta-event messages-snapshot-event
+        activity-snapshot-event activity-delta-event
+        subagent-started-event subagent-finished-event subagent-error-event
+        reasoning-start-event reasoning-end-event
+        reasoning-message-start-event reasoning-message-content-event
+        reasoning-message-end-event reasoning-message-chunk-event
+        reasoning-encrypted-value-event
+        thinking-start-event thinking-end-event
+        thinking-text-message-start-event thinking-text-message-content-event
+        thinking-text-message-end-event
         raw-event custom-event)
   (:key-style :camel)
   (:extra :allow))
@@ -126,6 +151,18 @@
   (:key-style :camel)
   (:extra :allow))
 
+;;; Convenience chunk events. A producer may send these instead of the explicit
+;;; triads; EXPAND-AG-UI-CHUNKS in chunks.lisp turns them back into START /
+;;; CONTENT / END so reducers only ever see one shape.
+(stack-schema:defschema text-message-chunk-event (ag-ui-event)
+  (event-type (eql "TEXT_MESSAGE_CHUNK") :default "TEXT_MESSAGE_CHUNK" :key "type")
+  (message-id string :optional t :accessor text-message-id)
+  (role string :optional t :accessor text-message-role)
+  (delta string :optional t :accessor text-message-delta)
+  (name string :optional t :accessor text-message-name)
+  (:key-style :camel)
+  (:extra :allow))
+
 (stack-schema:defschema tool-call-start-event (ag-ui-event)
   (event-type (eql "TOOL_CALL_START") :default "TOOL_CALL_START" :key "type")
   (tool-call-id string :accessor tool-call-id)
@@ -156,6 +193,15 @@
   (:key-style :camel)
   (:extra :allow))
 
+(stack-schema:defschema tool-call-chunk-event (ag-ui-event)
+  (event-type (eql "TOOL_CALL_CHUNK") :default "TOOL_CALL_CHUNK" :key "type")
+  (tool-call-id string :optional t :accessor tool-call-id)
+  (tool-call-name string :optional t :accessor tool-call-name)
+  (parent-message-id string :optional t :accessor tool-call-parent-message-id)
+  (delta string :optional t :accessor tool-call-delta)
+  (:key-style :camel)
+  (:extra :allow))
+
 (stack-schema:defschema state-snapshot-event (ag-ui-event)
   (event-type (eql "STATE_SNAPSHOT") :default "STATE_SNAPSHOT" :key "type")
   (snapshot t :accessor state-snapshot-value)
@@ -171,6 +217,148 @@
 (stack-schema:defschema messages-snapshot-event (ag-ui-event)
   (event-type (eql "MESSAGES_SNAPSHOT") :default "MESSAGES_SNAPSHOT" :key "type")
   (messages (vector ag-ui-message) :default #() :accessor messages-snapshot-messages)
+  (:key-style :camel)
+  (:extra :allow))
+
+;;; Activity — structured, in-progress work reported between chat messages,
+;;; following the same snapshot/delta shape as state. An activity message shares
+;;; the message id space, so its id must not collide with a text message.
+
+(stack-schema:defschema activity-snapshot-event (ag-ui-event)
+  (event-type (eql "ACTIVITY_SNAPSHOT") :default "ACTIVITY_SNAPSHOT" :key "type")
+  (message-id string :accessor text-message-id)
+  (activity-type string :accessor activity-type)
+  (content hash-table :accessor activity-content)
+  (replace boolean :optional t :accessor activity-replace-p)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema activity-delta-event (ag-ui-event)
+  (event-type (eql "ACTIVITY_DELTA") :default "ACTIVITY_DELTA" :key "type")
+  (message-id string :accessor text-message-id)
+  (activity-type string :accessor activity-type)
+  (patch (vector hash-table) :accessor activity-patch)
+  (:key-style :camel)
+  (:extra :allow))
+
+;;; Subagents — bracket a delegated child run so a frontend can tell which
+;;; subagent produced which output. Attribution on other events rides on the
+;;; base AG-UI-EVENT-SUBAGENT-RUN-ID.
+
+(stack-schema:defschema subagent-started-event (ag-ui-event)
+  (event-type (eql "SUBAGENT_STARTED") :default "SUBAGENT_STARTED" :key "type")
+  (subagent-run-id string :accessor ag-ui-event-subagent-run-id)
+  (name string :accessor subagent-name)
+  (description string :optional t :accessor subagent-description)
+  (parent-subagent-run-id string :optional t :accessor subagent-parent-run-id)
+  (parent-tool-call-id string :optional t :accessor subagent-parent-tool-call-id)
+  (parent-message-id string :optional t :accessor subagent-parent-message-id)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema subagent-finished-event (ag-ui-event)
+  (event-type (eql "SUBAGENT_FINISHED") :default "SUBAGENT_FINISHED" :key "type")
+  (subagent-run-id string :accessor ag-ui-event-subagent-run-id)
+  (result t :optional t :accessor subagent-result)
+  (outcome hash-table :optional t :accessor subagent-outcome)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema subagent-error-event (ag-ui-event)
+  (event-type (eql "SUBAGENT_ERROR") :default "SUBAGENT_ERROR" :key "type")
+  (subagent-run-id string :accessor ag-ui-event-subagent-run-id)
+  (message string :accessor run-error-message)
+  (code string :optional t :accessor run-error-code)
+  (:key-style :camel)
+  (:extra :allow))
+
+;;; Reasoning. REASONING_START / REASONING_END bracket a reasoning context;
+;;; REASONING_MESSAGE_* stream the portion meant to be shown to a user.
+;;; REASONING_ENCRYPTED_VALUE carries opaque chain-of-thought a client stores
+;;; and echoes back untouched, for zero-data-retention providers.
+
+(stack-schema:defschema reasoning-start-event (ag-ui-event)
+  (event-type (eql "REASONING_START") :default "REASONING_START" :key "type")
+  (message-id string :accessor text-message-id)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema reasoning-end-event (ag-ui-event)
+  (event-type (eql "REASONING_END") :default "REASONING_END" :key "type")
+  (message-id string :accessor text-message-id)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema reasoning-message-start-event (ag-ui-event)
+  (event-type (eql "REASONING_MESSAGE_START") :default "REASONING_MESSAGE_START"
+              :key "type")
+  (message-id string :accessor text-message-id)
+  (role (eql "reasoning") :default "reasoning" :accessor text-message-role)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema reasoning-message-content-event (ag-ui-event)
+  (event-type (eql "REASONING_MESSAGE_CONTENT")
+              :default "REASONING_MESSAGE_CONTENT" :key "type")
+  (message-id string :accessor text-message-id)
+  (delta string :accessor text-message-delta)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema reasoning-message-end-event (ag-ui-event)
+  (event-type (eql "REASONING_MESSAGE_END") :default "REASONING_MESSAGE_END"
+              :key "type")
+  (message-id string :accessor text-message-id)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema reasoning-message-chunk-event (ag-ui-event)
+  (event-type (eql "REASONING_MESSAGE_CHUNK") :default "REASONING_MESSAGE_CHUNK"
+              :key "type")
+  (message-id string :optional t :accessor text-message-id)
+  (delta string :optional t :accessor text-message-delta)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema reasoning-encrypted-value-event (ag-ui-event)
+  (event-type (eql "REASONING_ENCRYPTED_VALUE")
+              :default "REASONING_ENCRYPTED_VALUE" :key "type")
+  (subtype (member "message" "tool-call") :accessor reasoning-encrypted-subtype)
+  (entity-id string :accessor reasoning-encrypted-entity-id)
+  (encrypted-value string :accessor reasoning-encrypted-value)
+  (:key-style :camel)
+  (:extra :allow))
+
+;;; Deprecated upstream in favour of REASONING_*, removed at their 1.0. Decoded
+;;; so streams from producers that have not migrated still parse.
+
+(stack-schema:defschema thinking-start-event (ag-ui-event)
+  (event-type (eql "THINKING_START") :default "THINKING_START" :key "type")
+  (title string :optional t :accessor thinking-title)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema thinking-end-event (ag-ui-event)
+  (event-type (eql "THINKING_END") :default "THINKING_END" :key "type")
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema thinking-text-message-start-event (ag-ui-event)
+  (event-type (eql "THINKING_TEXT_MESSAGE_START")
+              :default "THINKING_TEXT_MESSAGE_START" :key "type")
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema thinking-text-message-content-event (ag-ui-event)
+  (event-type (eql "THINKING_TEXT_MESSAGE_CONTENT")
+              :default "THINKING_TEXT_MESSAGE_CONTENT" :key "type")
+  (delta string :accessor text-message-delta)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema thinking-text-message-end-event (ag-ui-event)
+  (event-type (eql "THINKING_TEXT_MESSAGE_END")
+              :default "THINKING_TEXT_MESSAGE_END" :key "type")
   (:key-style :camel)
   (:extra :allow))
 
@@ -305,6 +493,85 @@
   (%make 'messages-snapshot-event :event-type "MESSAGES_SNAPSHOT"
          :messages (if (listp messages) (coerce messages 'vector) messages)
          :timestamp timestamp))
+
+(defun make-activity-snapshot-event (&key message-id activity-type content
+                                       (replace t) timestamp)
+  (%make 'activity-snapshot-event :event-type "ACTIVITY_SNAPSHOT"
+         :message-id message-id :activity-type activity-type
+         :content content :replace replace :timestamp timestamp))
+
+(defun make-activity-delta-event (&key message-id activity-type patch timestamp)
+  (%make 'activity-delta-event :event-type "ACTIVITY_DELTA"
+         :message-id message-id :activity-type activity-type
+         :patch (if (listp patch) (coerce patch 'vector) patch)
+         :timestamp timestamp))
+
+(defun make-subagent-started-event (&key subagent-run-id name description
+                                      parent-subagent-run-id parent-tool-call-id
+                                      parent-message-id timestamp)
+  (%make 'subagent-started-event :event-type "SUBAGENT_STARTED"
+         :subagent-run-id subagent-run-id :name name :description description
+         :parent-subagent-run-id parent-subagent-run-id
+         :parent-tool-call-id parent-tool-call-id
+         :parent-message-id parent-message-id :timestamp timestamp))
+
+(defun make-subagent-finished-event (&key subagent-run-id result outcome timestamp)
+  (%make 'subagent-finished-event :event-type "SUBAGENT_FINISHED"
+         :subagent-run-id subagent-run-id :result result :outcome outcome
+         :timestamp timestamp))
+
+(defun make-subagent-error-event (&key subagent-run-id message code timestamp)
+  (%make 'subagent-error-event :event-type "SUBAGENT_ERROR"
+         :subagent-run-id subagent-run-id :message message :code code
+         :timestamp timestamp))
+
+(defun make-text-message-chunk-event (&key message-id role delta name timestamp)
+  (%make 'text-message-chunk-event :event-type "TEXT_MESSAGE_CHUNK"
+         :message-id message-id :role role :delta delta :name name
+         :timestamp timestamp))
+
+(defun make-tool-call-chunk-event (&key tool-call-id tool-call-name
+                                     parent-message-id delta timestamp)
+  (%make 'tool-call-chunk-event :event-type "TOOL_CALL_CHUNK"
+         :tool-call-id tool-call-id :tool-call-name tool-call-name
+         :parent-message-id parent-message-id :delta delta :timestamp timestamp))
+
+(defun make-reasoning-start-event (&key message-id timestamp)
+  (%make 'reasoning-start-event :event-type "REASONING_START"
+         :message-id message-id :timestamp timestamp))
+
+(defun make-reasoning-end-event (&key message-id timestamp)
+  (%make 'reasoning-end-event :event-type "REASONING_END"
+         :message-id message-id :timestamp timestamp))
+
+(defun make-reasoning-message-start-event (&key message-id timestamp)
+  (%make 'reasoning-message-start-event :event-type "REASONING_MESSAGE_START"
+         :message-id message-id :role "reasoning" :timestamp timestamp))
+
+(defun make-reasoning-message-content-event (&key message-id delta timestamp)
+  (%make 'reasoning-message-content-event :event-type "REASONING_MESSAGE_CONTENT"
+         :message-id message-id :delta delta :timestamp timestamp))
+
+(defun make-reasoning-message-end-event (&key message-id timestamp)
+  (%make 'reasoning-message-end-event :event-type "REASONING_MESSAGE_END"
+         :message-id message-id :timestamp timestamp))
+
+(defun make-reasoning-message-chunk-event (&key message-id delta timestamp)
+  (%make 'reasoning-message-chunk-event :event-type "REASONING_MESSAGE_CHUNK"
+         :message-id message-id :delta delta :timestamp timestamp))
+
+(defun make-reasoning-encrypted-value-event (&key subtype entity-id
+                                               encrypted-value timestamp)
+  (%make 'reasoning-encrypted-value-event :event-type "REASONING_ENCRYPTED_VALUE"
+         :subtype subtype :entity-id entity-id
+         :encrypted-value encrypted-value :timestamp timestamp))
+
+(defun make-thinking-start-event (&key title timestamp)
+  (%make 'thinking-start-event :event-type "THINKING_START"
+         :title title :timestamp timestamp))
+
+(defun make-thinking-end-event (&key timestamp)
+  (%make 'thinking-end-event :event-type "THINKING_END" :timestamp timestamp))
 
 (defun make-raw-event (&key event source timestamp)
   (%make 'raw-event :event-type "RAW"

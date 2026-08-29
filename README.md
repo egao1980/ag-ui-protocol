@@ -1,9 +1,15 @@
 # ag-ui-protocol
 
-CLOS [AG-UI](https://docs.ag-ui.com/concepts/events) protocol for cl-stack (wave-1).
+CLOS [AG-UI](https://docs.ag-ui.com/concepts/events) protocol for cl-stack.
 
 Typed events — **not JSON-RPC**. Official HTTP is `POST RunAgentInput` → SSE of
-`RUN_*` / `TEXT_MESSAGE_*` / `TOOL_CALL_*` / `STATE_*` / `MESSAGES_SNAPSHOT`.
+`RUN_*` / `TEXT_MESSAGE_*` / `TOOL_CALL_*` / `REASONING_*` / `STATE_*` /
+`ACTIVITY_*` / `SUBAGENT_*` / `MESSAGES_SNAPSHOT`. All 36 upstream event types
+decode; `every-upstream-event-type-is-modelled` in the test suite pins that.
+
+`*_CHUNK` events are a producer convenience — `expand-ag-ui-chunks` (or a
+`chunk-expander` for incremental use) rewrites them into the explicit
+START/CONTENT/END triads so reducers only ever see one shape.
 
 ```lisp
 (asdf:load-system "ag-ui-protocol")

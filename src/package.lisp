@@ -32,6 +32,25 @@
            #:state-snapshot-event
            #:state-delta-event
            #:messages-snapshot-event
+           #:text-message-chunk-event
+           #:tool-call-chunk-event
+           #:activity-snapshot-event
+           #:activity-delta-event
+           #:subagent-started-event
+           #:subagent-finished-event
+           #:subagent-error-event
+           #:reasoning-start-event
+           #:reasoning-end-event
+           #:reasoning-message-start-event
+           #:reasoning-message-content-event
+           #:reasoning-message-end-event
+           #:reasoning-message-chunk-event
+           #:reasoning-encrypted-value-event
+           #:thinking-start-event
+           #:thinking-end-event
+           #:thinking-text-message-start-event
+           #:thinking-text-message-content-event
+           #:thinking-text-message-end-event
            #:raw-event
            #:custom-event
            #:unknown-ag-ui-event
@@ -50,6 +69,22 @@
            #:make-state-snapshot-event
            #:make-state-delta-event
            #:make-messages-snapshot-event
+           #:make-text-message-chunk-event
+           #:make-tool-call-chunk-event
+           #:make-activity-snapshot-event
+           #:make-activity-delta-event
+           #:make-subagent-started-event
+           #:make-subagent-finished-event
+           #:make-subagent-error-event
+           #:make-reasoning-start-event
+           #:make-reasoning-end-event
+           #:make-reasoning-message-start-event
+           #:make-reasoning-message-content-event
+           #:make-reasoning-message-end-event
+           #:make-reasoning-message-chunk-event
+           #:make-reasoning-encrypted-value-event
+           #:make-thinking-start-event
+           #:make-thinking-end-event
            #:make-raw-event
            #:make-custom-event
            #:make-unknown-ag-ui-event
@@ -75,11 +110,34 @@
            #:state-snapshot-value
            #:state-delta-patch
            #:messages-snapshot-messages
+           #:text-message-name
+           #:activity-type
+           #:activity-content
+           #:activity-replace-p
+           #:activity-patch
+           #:subagent-name
+           #:subagent-description
+           #:subagent-parent-run-id
+           #:subagent-parent-tool-call-id
+           #:subagent-parent-message-id
+           #:subagent-result
+           #:subagent-outcome
+           #:reasoning-encrypted-subtype
+           #:reasoning-encrypted-entity-id
+           #:reasoning-encrypted-value
+           #:thinking-title
+           #:ag-ui-event-subagent-run-id
            #:raw-event-payload
            #:raw-event-source
            #:custom-event-name
            #:custom-event-value
            #:unknown-ag-ui-event-table
+           ;; chunk expansion
+           #:chunk-expander
+           #:make-chunk-expander
+           #:expand-chunk
+           #:finish-chunks
+           #:expand-ag-ui-chunks
            ;; input / messages
            #:run-agent-input
            #:run-agent-input-thread-id
@@ -111,6 +169,7 @@
            ;; json
            #:json-object
            #:param
+           #:event-field
            #:encode-json
            #:decode-json
            #:encode-run-agent-input

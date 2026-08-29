@@ -156,6 +156,192 @@
     (ok (typep (second events) 'ag-ui-protocol:unknown-ag-ui-event))
     (ok (typep (third events) 'ag-ui-protocol:run-finished-event))))
 
+(deftest-parametrize reasoning-event-roundtrip
+    ((event type)
+     ((ag-ui-protocol:make-reasoning-start-event :message-id "r1")
+      "REASONING_START")
+     ((ag-ui-protocol:make-reasoning-message-start-event :message-id "r1")
+      "REASONING_MESSAGE_START")
+     ((ag-ui-protocol:make-reasoning-message-content-event
+       :message-id "r1" :delta "because")
+      "REASONING_MESSAGE_CONTENT")
+     ((ag-ui-protocol:make-reasoning-message-end-event :message-id "r1")
+      "REASONING_MESSAGE_END")
+     ((ag-ui-protocol:make-reasoning-message-chunk-event
+       :message-id "r1" :delta "because")
+      "REASONING_MESSAGE_CHUNK")
+     ((ag-ui-protocol:make-reasoning-end-event :message-id "r1")
+      "REASONING_END")
+     ((ag-ui-protocol:make-reasoning-encrypted-value-event
+       :subtype "message" :entity-id "m1" :encrypted-value "opaque")
+      "REASONING_ENCRYPTED_VALUE")
+     ((ag-ui-protocol:make-thinking-start-event :title "pondering")
+      "THINKING_START")
+     ((ag-ui-protocol:make-thinking-end-event)
+      "THINKING_END")
+     ((ag-ui-protocol:make-text-message-chunk-event :message-id "m1" :delta "hi")
+      "TEXT_MESSAGE_CHUNK")
+     ((ag-ui-protocol:make-tool-call-chunk-event
+       :tool-call-id "c1" :tool-call-name "search" :delta "{}")
+      "TOOL_CALL_CHUNK"))
+  (ok (equal type (ag-ui-protocol:ag-ui-event-type event)))
+  (ok (equal type (ag-ui-protocol:ag-ui-event-type (%roundtrip event)))))
+
+(deftest reasoning-fields-survive-the-wire
+  (let ((ev (%roundtrip (ag-ui-protocol:make-reasoning-message-content-event
+                         :message-id "r1" :delta "step one"))))
+    (ok (typep ev 'ag-ui-protocol:reasoning-message-content-event))
+    (ok (equal "r1" (ag-ui-protocol:text-message-id ev)))
+    (ok (equal "step one" (ag-ui-protocol:text-message-delta ev))))
+  (let ((enc (%roundtrip (ag-ui-protocol:make-reasoning-encrypted-value-event
+                          :subtype "tool-call" :entity-id "c1"
+                          :encrypted-value "zzz"))))
+    (ok (equal "tool-call" (ag-ui-protocol:reasoning-encrypted-subtype enc)))
+    (ok (equal "c1" (ag-ui-protocol:reasoning-encrypted-entity-id enc)))
+    (ok (equal "zzz" (ag-ui-protocol:reasoning-encrypted-value enc)))))
+
+(deftest deprecated-thinking-events-still-decode
+  ;; Producers that have not migrated to REASONING_* must not break the stream.
+  (let ((start (ag-ui-protocol:decode-ag-ui-event
+                "{\"type\":\"THINKING_TEXT_MESSAGE_START\"}"))
+        (content (ag-ui-protocol:decode-ag-ui-event
+                  "{\"type\":\"THINKING_TEXT_MESSAGE_CONTENT\",\"delta\":\"hm\"}")))
+    (ok (typep start 'ag-ui-protocol:thinking-text-message-start-event))
+    (ok (typep content 'ag-ui-protocol:thinking-text-message-content-event))
+    (ok (equal "hm" (ag-ui-protocol:text-message-delta content)))))
+
+(defun %types (events)
+  (mapcar #'ag-ui-protocol:ag-ui-event-type events))
+
+(deftest text-chunks-expand-to-triad
+  (let ((out (ag-ui-protocol:expand-ag-ui-chunks
+              (list (ag-ui-protocol:make-text-message-chunk-event
+                     :message-id "m1" :delta "he")
+                    (ag-ui-protocol:make-text-message-chunk-event :delta "llo")))))
+    (ok (equal '("TEXT_MESSAGE_START" "TEXT_MESSAGE_CONTENT" "TEXT_MESSAGE_CONTENT"
+                 "TEXT_MESSAGE_END")
+               (%types out)))
+    (ok (equal "assistant" (ag-ui-protocol:text-message-role (first out))))
+    (ok (equal "llo" (ag-ui-protocol:text-message-delta (third out))))))
+
+(deftest text-chunks-close-on-id-switch
+  (let ((out (ag-ui-protocol:expand-ag-ui-chunks
+              (list (ag-ui-protocol:make-text-message-chunk-event
+                     :message-id "m1" :delta "a")
+                    (ag-ui-protocol:make-text-message-chunk-event
+                     :message-id "m2" :delta "b")))))
+    (ok (equal '("TEXT_MESSAGE_START" "TEXT_MESSAGE_CONTENT"
+                 "TEXT_MESSAGE_END" "TEXT_MESSAGE_START" "TEXT_MESSAGE_CONTENT"
+                 "TEXT_MESSAGE_END")
+               (%types out)))))
+
+(deftest tool-chunks-expand-to-triad
+  (let ((out (ag-ui-protocol:expand-ag-ui-chunks
+              (list (ag-ui-protocol:make-tool-call-chunk-event
+                     :tool-call-id "c1" :tool-call-name "search" :delta "{\"q\"")
+                    (ag-ui-protocol:make-tool-call-chunk-event :delta ":1}")))))
+    (ok (equal '("TOOL_CALL_START" "TOOL_CALL_ARGS" "TOOL_CALL_ARGS" "TOOL_CALL_END")
+               (%types out)))
+    (ok (equal "search" (ag-ui-protocol:tool-call-name (first out))))))
+
+(deftest tool-chunk-without-name-errors
+  (ok (signals (ag-ui-protocol:expand-ag-ui-chunks
+                (list (ag-ui-protocol:make-tool-call-chunk-event
+                       :tool-call-id "c1" :delta "{}")))
+               'ag-ui-protocol:ag-ui-error))
+  (ok (signals (ag-ui-protocol:expand-ag-ui-chunks
+                (list (ag-ui-protocol:make-text-message-chunk-event :delta "x")))
+               'ag-ui-protocol:ag-ui-error)))
+
+(deftest reasoning-chunk-closes-on-empty-delta-and-foreign-event
+  (let ((out (ag-ui-protocol:expand-ag-ui-chunks
+              (list (ag-ui-protocol:make-reasoning-message-chunk-event
+                     :message-id "r1" :delta "why")
+                    (ag-ui-protocol:make-reasoning-message-chunk-event
+                     :message-id "r1" :delta "")))))
+    (ok (equal '("REASONING_MESSAGE_START" "REASONING_MESSAGE_CONTENT"
+                 "REASONING_MESSAGE_END")
+               (%types out))))
+  ;; A non-reasoning event implicitly closes an open reasoning message.
+  (let ((out (ag-ui-protocol:expand-ag-ui-chunks
+              (list (ag-ui-protocol:make-reasoning-message-chunk-event
+                     :message-id "r1" :delta "why")
+                    (ag-ui-protocol:make-run-finished-event
+                     :thread-id "t" :run-id "r")))))
+    (ok (equal '("REASONING_MESSAGE_START" "REASONING_MESSAGE_CONTENT"
+                 "REASONING_MESSAGE_END" "RUN_FINISHED")
+               (%types out)))))
+
+(deftest non-chunk-events-pass-through-unchanged
+  (let* ((input (list (ag-ui-protocol:make-run-started-event
+                       :thread-id "t" :run-id "r")
+                      (ag-ui-protocol:make-text-message-start-event :message-id "m")
+                      (ag-ui-protocol:make-text-message-content-event
+                       :message-id "m" :delta "hi")
+                      (ag-ui-protocol:make-text-message-end-event :message-id "m")
+                      (ag-ui-protocol:make-run-finished-event
+                       :thread-id "t" :run-id "r")))
+         (out (ag-ui-protocol:expand-ag-ui-chunks input)))
+    (ok (equal (%types input) (%types out)))))
+
+(deftest subagent-run-id-is-carried
+  (let* ((ev (ag-ui-protocol:make-text-message-content-event
+              :message-id "m" :delta "hi"))
+         (back (progn (setf (ag-ui-protocol:ag-ui-event-subagent-run-id ev) "sub-1")
+                      (%roundtrip ev))))
+    (ok (equal "sub-1" (ag-ui-protocol:ag-ui-event-subagent-run-id back))))
+  ;; Omitted when unset, so the wire is unchanged for producers that ignore it.
+  (let ((json (ag-ui-protocol:decode-json
+               (ag-ui-protocol:encode-ag-ui-event
+                (ag-ui-protocol:make-text-message-end-event :message-id "m")))))
+    (ng (nth-value 1 (gethash "subagentRunId" json)))))
+
+(defparameter +upstream-event-types+
+  '("TEXT_MESSAGE_START" "TEXT_MESSAGE_CONTENT" "TEXT_MESSAGE_END"
+    "TEXT_MESSAGE_CHUNK"
+    "TOOL_CALL_START" "TOOL_CALL_ARGS" "TOOL_CALL_END" "TOOL_CALL_CHUNK"
+    "TOOL_CALL_RESULT"
+    "THINKING_START" "THINKING_END" "THINKING_TEXT_MESSAGE_START"
+    "THINKING_TEXT_MESSAGE_CONTENT" "THINKING_TEXT_MESSAGE_END"
+    "STATE_SNAPSHOT" "STATE_DELTA" "MESSAGES_SNAPSHOT"
+    "ACTIVITY_SNAPSHOT" "ACTIVITY_DELTA"
+    "RAW" "CUSTOM"
+    "RUN_STARTED" "RUN_FINISHED" "RUN_ERROR" "STEP_STARTED" "STEP_FINISHED"
+    "REASONING_START" "REASONING_MESSAGE_START" "REASONING_MESSAGE_CONTENT"
+    "REASONING_MESSAGE_END" "REASONING_MESSAGE_CHUNK" "REASONING_END"
+    "REASONING_ENCRYPTED_VALUE"
+    "SUBAGENT_STARTED" "SUBAGENT_FINISHED" "SUBAGENT_ERROR")
+  "The upstream EventType enum. Field names are public protocol (MIT); this is a
+   re-expression, not a copy of @ag-ui/core sources.")
+
+(deftest every-upstream-event-type-is-modelled
+  (let ((missing (remove-if #'ag-ui-protocol:known-event-type-p
+                            +upstream-event-types+)))
+    (ok (null missing)
+        (format nil "unmodelled upstream event types: ~{~a~^ ~}" missing))
+    (ok (= 36 (length +upstream-event-types+)))))
+
+(deftest activity-and-subagent-events
+  (let ((snap (%roundtrip (ag-ui-protocol:make-activity-snapshot-event
+                           :message-id "a1" :activity-type "PLAN"
+                           :content (ag-ui-protocol:json-object "step" 1))))
+        (delta (%roundtrip (ag-ui-protocol:make-activity-delta-event
+                            :message-id "a1" :activity-type "PLAN"
+                            :patch (list (ag-ui-protocol:json-object
+                                          "op" "replace" "path" "/step"
+                                          "value" 2)))))
+        (started (%roundtrip (ag-ui-protocol:make-subagent-started-event
+                              :subagent-run-id "s1" :name "researcher")))
+        (err (%roundtrip (ag-ui-protocol:make-subagent-error-event
+                          :subagent-run-id "s1" :message "boom"))))
+    (ok (equal "PLAN" (ag-ui-protocol:activity-type snap)))
+    (ok (equal 1 (gethash "step" (ag-ui-protocol:activity-content snap))))
+    (ok (equal "replace" (ag-ui-protocol:param
+                          (aref (ag-ui-protocol:activity-patch delta) 0) "op")))
+    (ok (equal "researcher" (ag-ui-protocol:subagent-name started)))
+    (ok (equal "s1" (ag-ui-protocol:ag-ui-event-subagent-run-id started)))
+    (ok (equal "boom" (ag-ui-protocol:run-error-message err)))))
+
 (deftest raw-and-custom-events
   (let ((raw (%roundtrip (ag-ui-protocol:make-raw-event
                           :event (ag-ui-protocol:json-object "kind" "foreign")
