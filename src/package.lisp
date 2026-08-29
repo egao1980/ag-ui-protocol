@@ -193,6 +193,9 @@
            #:ag-ui-message-name
            #:ag-ui-message-tool-call-id
            #:ag-ui-message-tool-calls
+           #:ag-ui-message-activity-type
+           #:ag-ui-message-error
+           #:ag-ui-message-encrypted-value
            #:make-ag-ui-message
            #:ag-ui-tool
            #:ag-ui-tool-name

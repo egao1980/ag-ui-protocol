@@ -21,6 +21,9 @@
        (slot-boundp event slot-name)
        (slot-value event slot-name)))
 
+;;; Roles: developer, system, assistant, user, tool, activity, reasoning.
+;;; ACTIVITY-TYPE applies to activity messages, ERROR to failed tool results,
+;;; and ENCRYPTED-VALUE to reasoning carried across turns opaquely.
 (stack-schema:defschema ag-ui-message ()
   (id string :accessor ag-ui-message-id)
   (role string :accessor ag-ui-message-role)
@@ -28,6 +31,9 @@
   (name string :optional t :accessor ag-ui-message-name)
   (tool-call-id string :optional t :accessor ag-ui-message-tool-call-id)
   (tool-calls (vector hash-table) :optional t :accessor ag-ui-message-tool-calls)
+  (activity-type string :optional t :accessor ag-ui-message-activity-type)
+  (error string :optional t :accessor ag-ui-message-error)
+  (encrypted-value string :optional t :accessor ag-ui-message-encrypted-value)
   (:key-style :camel)
   (:extra :allow))
 
@@ -453,12 +459,15 @@
 
 (defvar *ag-ui-backend* nil)
 
-(defun make-ag-ui-message (&key id role content name tool-call-id tool-calls)
+(defun make-ag-ui-message (&key id role content name tool-call-id tool-calls
+                             activity-type error encrypted-value)
   (%make 'ag-ui-message
          :id (or id (format nil "msg-~a" (random (expt 36 6))))
          :role (or role "user")
          :content content :name name
-         :tool-call-id tool-call-id :tool-calls tool-calls))
+         :tool-call-id tool-call-id :tool-calls tool-calls
+         :activity-type activity-type :error error
+         :encrypted-value encrypted-value))
 
 (defun make-ag-ui-tool (&key name (description "") parameters)
   (%make 'ag-ui-tool :name name :description description :parameters parameters))
