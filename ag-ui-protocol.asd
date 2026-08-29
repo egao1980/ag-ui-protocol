@@ -52,7 +52,7 @@
 (defsystem "ag-ui-protocol/tests"
   :depends-on ("ag-ui-protocol" "ag-ui-protocol/client"
                "ag-ui-protocol/capability"
-               "protobuf-backend-cl-protobufs" "rove")
+               (:version "protobuf-backend-cl-protobufs" "0.2.0") "rove")
   :pathname "tests"
   :serial t
   :components ((:file "package")
