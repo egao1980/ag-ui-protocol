@@ -14,6 +14,7 @@
                (:file "json")
                (:file "events")
                (:file "chunks")
+               (:file "interrupts")
                (:file "protocol"))
   :in-order-to ((test-op (test-op "ag-ui-protocol/tests"))))
 

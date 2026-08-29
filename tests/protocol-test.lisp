@@ -342,6 +342,159 @@
     (ok (equal "s1" (ag-ui-protocol:ag-ui-event-subagent-run-id started)))
     (ok (equal "boom" (ag-ui-protocol:run-error-message err)))))
 
+;;; Interrupts
+
+(defun %approval-interrupt (&key (id "int-1") (tool-call-id "tc-1") expires-at)
+  (ag-ui-protocol:make-interrupt
+   :id id :reason "tool_call" :tool-call-id tool-call-id
+   :message "Send email?" :expires-at expires-at
+   :response-schema (ag-ui-protocol:json-object
+                     "type" "object"
+                     "required" (vector "approved")
+                     "properties" (ag-ui-protocol:json-object
+                                   "approved" (ag-ui-protocol:json-object
+                                               "type" "boolean")))))
+
+(deftest run-finished-outcome-roundtrip
+  (let* ((ev (ag-ui-protocol:make-run-interrupted-event
+              :thread-id "t" :run-id "r"
+              :interrupts (list (%approval-interrupt))))
+         (back (%roundtrip ev))
+         (open (ag-ui-protocol:open-interrupts back)))
+    (ok (typep back 'ag-ui-protocol:run-finished-event))
+    (ok (ag-ui-protocol:run-interrupted-p back))
+    (ok (= 1 (length open)))
+    (ok (equal "int-1" (ag-ui-protocol:interrupt-id (first open))))
+    (ok (equal "tool_call" (ag-ui-protocol:interrupt-reason (first open))))
+    (ok (equal "tc-1" (ag-ui-protocol:interrupt-tool-call-id (first open))))))
+
+(deftest run-finished-without-outcome-is-a-plain-completion
+  ;; A producer written before interrupts omits `outcome` entirely.
+  (let ((back (ag-ui-protocol:decode-ag-ui-event
+               "{\"type\":\"RUN_FINISHED\",\"threadId\":\"t\",\"runId\":\"r\"}")))
+    (ng (ag-ui-protocol:run-interrupted-p back))
+    (ng (ag-ui-protocol:open-interrupts back)))
+  ;; ...and `outcome` is omitted from the wire when unset.
+  (let ((json (ag-ui-protocol:decode-json
+               (ag-ui-protocol:encode-ag-ui-event
+                (ag-ui-protocol:make-run-finished-event
+                 :thread-id "t" :run-id "r")))))
+    (ng (nth-value 1 (gethash "outcome" json)))))
+
+(deftest success-outcome-roundtrip
+  (let ((back (%roundtrip (ag-ui-protocol:make-run-finished-event
+                           :thread-id "t" :run-id "r"
+                           :outcome (ag-ui-protocol:make-run-success-outcome)))))
+    (ok (typep (ag-ui-protocol:run-finished-outcome back)
+               'ag-ui-protocol:run-success-outcome))
+    (ng (ag-ui-protocol:run-interrupted-p back))))
+
+(deftest resume-input-roundtrip
+  (let* ((input (ag-ui-protocol:make-run-agent-input
+                 :thread-id "t" :run-id "r2"
+                 :resume (list (ag-ui-protocol:make-resume-entry
+                                :interrupt-id "int-1"
+                                :payload (ag-ui-protocol:json-object
+                                          "approved" t)))))
+         (back (ag-ui-protocol:decode-run-agent-input
+                (ag-ui-protocol:encode-json
+                 (ag-ui-protocol:encode-run-agent-input input))))
+         (entry (aref (ag-ui-protocol:run-agent-input-resume back) 0)))
+    (ok (equal "int-1" (ag-ui-protocol:resume-interrupt-id entry)))
+    (ok (equal "resolved" (ag-ui-protocol:resume-status entry)))
+    (ok (ag-ui-protocol:resume-approved-p entry))))
+
+(deftest validate-resume-accepts-a-conforming-answer
+  (ok (ag-ui-protocol:validate-resume
+       (list (%approval-interrupt))
+       (list (ag-ui-protocol:make-resume-entry
+              :interrupt-id "int-1"
+              :payload (ag-ui-protocol:json-object "approved" t))))))
+
+(deftest validate-resume-enforces-the-contract
+  (let ((interrupts (list (%approval-interrupt :id "a")
+                          (%approval-interrupt :id "b" :tool-call-id "tc-2"))))
+    ;; Partial resumes are not supported.
+    (ok (signals (ag-ui-protocol:validate-resume
+                  interrupts
+                  (list (ag-ui-protocol:make-resume-entry
+                         :interrupt-id "a"
+                         :payload (ag-ui-protocol:json-object "approved" t))))
+                 'ag-ui-protocol:ag-ui-resume-error))
+    ;; An id that was never open.
+    (ok (signals (ag-ui-protocol:validate-resume
+                  (list (%approval-interrupt :id "a"))
+                  (list (ag-ui-protocol:make-resume-entry :interrupt-id "zzz")))
+                 'ag-ui-protocol:ag-ui-resume-error)))
+  ;; A payload that fails its own responseSchema.
+  (ok (signals (ag-ui-protocol:validate-resume
+                (list (%approval-interrupt))
+                (list (ag-ui-protocol:make-resume-entry
+                       :interrupt-id "int-1"
+                       :payload (ag-ui-protocol:json-object "approved" "yes"))))
+               'ag-ui-protocol:ag-ui-resume-error))
+  ;; Cancelled needs no payload, so the schema is not applied.
+  (ok (ag-ui-protocol:validate-resume
+       (list (%approval-interrupt))
+       (list (ag-ui-protocol:make-resume-entry
+              :interrupt-id "int-1" :status "cancelled")))))
+
+(deftest validate-resume-rejects-expired-interrupts
+  (let ((interrupts (list (%approval-interrupt :expires-at "2020-01-01T00:00:00Z"))))
+    (ok (ag-ui-protocol:interrupt-expired-p (first interrupts)))
+    (ok (signals (ag-ui-protocol:validate-resume
+                  interrupts
+                  (list (ag-ui-protocol:make-resume-entry
+                         :interrupt-id "int-1"
+                         :payload (ag-ui-protocol:json-object "approved" t))))
+                 'ag-ui-protocol:ag-ui-resume-error)))
+  ;; An unreadable expiry is left for the agent to adjudicate, not refused here.
+  (ng (ag-ui-protocol:interrupt-expired-p
+       (%approval-interrupt :expires-at "whenever"))))
+
+(deftest parse-iso8601-handles-offsets
+  (ok (= (ag-ui-protocol:parse-iso8601 "2026-04-20T17:00:00Z")
+         (ag-ui-protocol:parse-iso8601 "2026-04-20T19:00:00+02:00")))
+  (ok (= (ag-ui-protocol:parse-iso8601 "2026-04-20T17:00:00Z")
+         (ag-ui-protocol:parse-iso8601 "2026-04-20T17:00:00.123Z")))
+  (ng (ag-ui-protocol:parse-iso8601 "not-a-time")))
+
+(deftest pending-interrupts-block-new-input
+  (let ((interrupts (list (%approval-interrupt))))
+    (ok (signals (ag-ui-protocol:validate-resume-input
+                  (ag-ui-protocol:make-run-agent-input :thread-id "t" :run-id "r2")
+                  interrupts)
+                 'ag-ui-protocol:ag-ui-resume-error))
+    (ok (ag-ui-protocol:validate-resume-input
+         (ag-ui-protocol:make-run-agent-input
+          :thread-id "t" :run-id "r2"
+          :resume (list (ag-ui-protocol:make-resume-entry
+                         :interrupt-id "int-1"
+                         :payload (ag-ui-protocol:json-object "approved" t))))
+         interrupts)))
+  ;; No interrupts open and no resume sent is the ordinary case.
+  (ok (ag-ui-protocol:validate-resume-input
+       (ag-ui-protocol:make-run-agent-input :thread-id "t" :run-id "r1")
+       nil)))
+
+(deftest resume-decision-helpers
+  (let ((denied (ag-ui-protocol:make-resume-entry
+                 :interrupt-id "i"
+                 :payload (ag-ui-protocol:json-object "approved" nil)))
+        (cancelled (ag-ui-protocol:make-resume-entry
+                    :interrupt-id "i" :status "cancelled"))
+        (edited (ag-ui-protocol:make-resume-entry
+                 :interrupt-id "i"
+                 :payload (ag-ui-protocol:json-object
+                           "approved" t
+                           "editedArgs" (ag-ui-protocol:json-object
+                                         "to" "a@b.com")))))
+    (ng (ag-ui-protocol:resume-approved-p denied))
+    (ng (ag-ui-protocol:resume-approved-p cancelled))
+    (ok (ag-ui-protocol:resume-approved-p edited))
+    (ok (equal "a@b.com" (gethash "to" (ag-ui-protocol:resume-edited-args edited))))
+    (ng (ag-ui-protocol:resume-edited-args denied))))
+
 (deftest raw-and-custom-events
   (let ((raw (%roundtrip (ag-ui-protocol:make-raw-event
                           :event (ag-ui-protocol:json-object "kind" "foreign")

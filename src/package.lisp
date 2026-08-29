@@ -148,7 +148,44 @@
            #:run-agent-input-tools
            #:run-agent-input-context
            #:run-agent-input-forwarded-props
+           #:run-agent-input-resume
            #:make-run-agent-input
+           ;; interrupts
+           #:interrupt
+           #:interrupt-id
+           #:interrupt-reason
+           #:interrupt-message
+           #:interrupt-tool-call-id
+           #:interrupt-response-schema
+           #:interrupt-expires-at
+           #:interrupt-metadata
+           #:interrupt-subagent-run-id
+           #:make-interrupt
+           #:resume-entry
+           #:resume-interrupt-id
+           #:resume-status
+           #:resume-payload
+           #:resume-metadata
+           #:make-resume-entry
+           #:run-outcome
+           #:run-outcome-type
+           #:run-success-outcome
+           #:run-interrupt-outcome
+           #:outcome-interrupts
+           #:make-run-success-outcome
+           #:make-run-interrupt-outcome
+           #:make-run-interrupted-event
+           #:run-finished-outcome
+           #:open-interrupts
+           #:run-interrupted-p
+           #:ag-ui-resume-error
+           #:ag-ui-resume-error-rule
+           #:validate-resume
+           #:validate-resume-input
+           #:resume-approved-p
+           #:resume-edited-args
+           #:interrupt-expired-p
+           #:parse-iso8601
            #:ag-ui-message
            #:ag-ui-message-id
            #:ag-ui-message-role

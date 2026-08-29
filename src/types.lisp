@@ -45,6 +45,53 @@
   (:key-style :camel)
   (:extra :allow))
 
+;;; Interrupts — the human-in-the-loop contract. A run that needs input ends
+;;; with an interrupt outcome rather than blocking; the client answers by
+;;; starting a NEW run whose input carries a `resume` entry per open interrupt.
+
+(stack-schema:defschema interrupt ()
+  "One pause point. REASON routes the UI: `tool_call`, `input_required`, and
+   `confirmation` are spec-defined; any other string is a valid extension and
+   clients must render it from MESSAGE rather than erroring."
+  (id string :accessor interrupt-id)
+  (reason string :accessor interrupt-reason)
+  (message string :optional t :accessor interrupt-message)
+  (tool-call-id string :optional t :accessor interrupt-tool-call-id)
+  (response-schema hash-table :optional t :accessor interrupt-response-schema)
+  (expires-at string :optional t :accessor interrupt-expires-at)
+  (metadata hash-table :optional t :accessor interrupt-metadata)
+  (subagent-run-id string :optional t :accessor interrupt-subagent-run-id)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema resume-entry ()
+  "One answer to one interrupt. A denial is expressed inside PAYLOAD (say
+   {\"approved\": false}), not by STATUS — `cancelled` means the user walked
+   away without answering."
+  (interrupt-id string :accessor resume-interrupt-id)
+  (status (member "resolved" "cancelled") :accessor resume-status)
+  (payload t :optional t :accessor resume-payload)
+  (metadata hash-table :optional t :accessor resume-metadata)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema run-outcome ()
+  (outcome-type string :key "type" :accessor run-outcome-type)
+  (:tag outcome-type run-success-outcome run-interrupt-outcome)
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema run-success-outcome (run-outcome)
+  (outcome-type (eql "success") :default "success" :key "type")
+  (:key-style :camel)
+  (:extra :allow))
+
+(stack-schema:defschema run-interrupt-outcome (run-outcome)
+  (outcome-type (eql "interrupt") :default "interrupt" :key "type")
+  (interrupts (vector interrupt) :default #() :accessor outcome-interrupts)
+  (:key-style :camel)
+  (:extra :allow))
+
 (stack-schema:defschema run-agent-input ()
   (thread-id string :accessor run-agent-input-thread-id)
   (run-id string :accessor run-agent-input-run-id)
@@ -54,6 +101,7 @@
   (tools (vector ag-ui-tool) :default #() :accessor run-agent-input-tools)
   (context (vector ag-ui-context) :default #() :accessor run-agent-input-context)
   (forwarded-props hash-table :optional t :accessor run-agent-input-forwarded-props)
+  (resume (vector resume-entry) :optional t :accessor run-agent-input-resume)
   (:key-style :camel)
   (:extra :allow))
 
@@ -104,11 +152,15 @@
   (:key-style :camel)
   (:extra :allow))
 
+;;; OUTCOME is optional: a producer written before interrupts existed omits it
+;;; and is read as a normal completion. RESULT stays at the event root for the
+;;; same back-compat reason rather than moving inside the success variant.
 (stack-schema:defschema run-finished-event (ag-ui-event)
   (event-type (eql "RUN_FINISHED") :default "RUN_FINISHED" :key "type")
   (thread-id string :accessor run-finished-thread-id)
   (run-id string :accessor run-finished-run-id)
   (result t :optional t :accessor run-finished-result)
+  (outcome run-outcome :optional t :accessor run-finished-outcome)
   (:key-style :camel)
   (:extra :allow))
 
@@ -415,14 +467,15 @@
   (%make 'ag-ui-context :description description :value value))
 
 (defun make-run-agent-input (&key thread-id run-id parent-run-id state
-                               messages tools context forwarded-props)
+                               messages tools context forwarded-props resume)
   (%make 'run-agent-input
          :thread-id thread-id :run-id run-id
          :parent-run-id parent-run-id :state state
          :messages (if (listp messages) (coerce messages 'vector) messages)
          :tools (if (listp tools) (coerce tools 'vector) tools)
          :context (if (listp context) (coerce context 'vector) context)
-         :forwarded-props forwarded-props))
+         :forwarded-props forwarded-props
+         :resume (if (listp resume) (coerce resume 'vector) resume)))
 
 (defun make-ag-ui-agent (&key (name "agent") handler)
   (make-instance 'ag-ui-agent :name name :handler handler))
@@ -432,9 +485,36 @@
          :thread-id thread-id :run-id run-id
          :parent-run-id parent-run-id :input input :timestamp timestamp))
 
-(defun make-run-finished-event (&key thread-id run-id result timestamp)
+(defun make-interrupt (&key id reason message tool-call-id response-schema
+                         expires-at metadata subagent-run-id)
+  (%make 'interrupt
+         :id (or id (format nil "int-~a" (random (expt 36 8))))
+         :reason (or reason "input_required")
+         :message message :tool-call-id tool-call-id
+         :response-schema response-schema :expires-at expires-at
+         :metadata metadata :subagent-run-id subagent-run-id))
+
+(defun make-resume-entry (&key interrupt-id (status "resolved") payload metadata)
+  (%make 'resume-entry :interrupt-id interrupt-id :status status
+         :payload payload :metadata metadata))
+
+(defun make-run-success-outcome ()
+  (%make 'run-success-outcome :outcome-type "success"))
+
+(defun make-run-interrupt-outcome (&key interrupts)
+  (%make 'run-interrupt-outcome :outcome-type "interrupt"
+         :interrupts (if (listp interrupts) (coerce interrupts 'vector) interrupts)))
+
+(defun make-run-finished-event (&key thread-id run-id result outcome timestamp)
   (%make 'run-finished-event :event-type "RUN_FINISHED"
-         :thread-id thread-id :run-id run-id :result result :timestamp timestamp))
+         :thread-id thread-id :run-id run-id :result result
+         :outcome outcome :timestamp timestamp))
+
+(defun make-run-interrupted-event (&key thread-id run-id interrupts timestamp)
+  "RUN_FINISHED carrying an interrupt outcome — the run paused for input."
+  (make-run-finished-event
+   :thread-id thread-id :run-id run-id :timestamp timestamp
+   :outcome (make-run-interrupt-outcome :interrupts interrupts)))
 
 (defun make-run-error-event (&key message code timestamp)
   (%make 'run-error-event :event-type "RUN_ERROR"
