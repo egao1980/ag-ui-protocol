@@ -5,11 +5,7 @@
   :license "MIT"
   :depends-on ("json-protocol" "json-backend-jzon" "babel" "sse-protocol"
                "serdes-protocol" "schema-protocol" "schema-protocol-json")
-  :properties (:cl-repo (:ci (:with ("dissect")
-                             :sources (("json-protocol" :oci)
-                                       ("serdes-protocol" :oci)
-                                       ("schema-protocol" :oci)
-                                       ("schema-protocol-json" :oci)))))
+  :properties (:cl-repo (:ci (:with ("dissect"))))
   :serial t
   :pathname "src"
   :components ((:file "package")
