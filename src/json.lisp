@@ -26,7 +26,7 @@
   (cond
     ((stringp source) source)
     ((and (vectorp source) (not (stringp source)))
-     (babel:octets-to-string source :encoding :utf-8))
+     (encoding-protocol:decode source))
     ((streamp source)
      (with-output-to-string (out)
        (loop for c = (read-char source nil :eof)
