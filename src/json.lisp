@@ -17,12 +17,10 @@
     (t default)))
 
 (defun encode-json (obj)
-  (let ((yason:*symbol-encoder* #'yason:encode-symbol-as-lowercase))
-    (with-output-to-string (s)
-      (yason:encode obj s))))
+  (json-protocol:encode obj))
 
 (defun decode-json (string)
-  (yason:parse string :object-as :hash-table :json-arrays-as-vectors t))
+  (json-protocol:decode string))
 
 (defun %source-string (source)
   (cond

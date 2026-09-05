@@ -3,8 +3,8 @@
   :description "CLOS AG-UI protocol — typed agent↔UI events (not JSON-RPC)"
   :author "egao1980"
   :license "MIT"
-  :depends-on ("yason" "babel" "sse-protocol" "serdes-protocol"
-               "schema-protocol" "schema-protocol-json")
+  :depends-on ("json-protocol" "json-backend-jzon" "babel" "sse-protocol"
+               "serdes-protocol" "schema-protocol" "schema-protocol-json")
   :properties (:cl-repo (:ci (:with ("dissect"))))
   :serial t
   :pathname "src"
