@@ -304,9 +304,17 @@
            #:encode-ag-ui-framed
            #:decode-ag-ui-framed
            #:map-ag-ui-framed
+           #:encode-ag-ui-event-oneof
+           #:decode-ag-ui-event-oneof
+           #:encode-ag-ui-framed-oneof
+           #:decode-ag-ui-framed-oneof
+           #:map-ag-ui-framed-oneof
+           #:ag-ui-oneof-event-type-p
            #:+ag-ui-sse-media-type+
            #:+ag-ui-proto-media-type+
+           #:+ag-ui-oneof-media-type+
            #:negotiate-ag-ui-format
+           #:invoke-ag-ui-app
            ;; agent / serve
            #:ag-ui-agent
            #:ag-ui-agent-name

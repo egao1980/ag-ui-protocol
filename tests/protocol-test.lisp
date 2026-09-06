@@ -627,6 +627,12 @@
   (ok (eq :protobuf
           (ag-ui-protocol:negotiate-ag-ui-format
            "application/vnd.ag-ui.event+proto")))
+  (ok (eq :oneof
+          (ag-ui-protocol:negotiate-ag-ui-format
+           "application/vnd.ag-ui.event+oneof")))
+  (ok (eq :protobuf
+          (ag-ui-protocol:negotiate-ag-ui-format
+           "application/vnd.ag-ui.event+proto, application/vnd.ag-ui.event+oneof")))
   (ok (null (ag-ui-protocol:negotiate-ag-ui-format "application/json"))))
 
 (deftest accept-protobuf-roundtrip
@@ -640,14 +646,16 @@
                   :thread-id "t" :run-id "r"
                   :messages (list (ag-ui-protocol:make-ag-ui-message
                                    :role "user" :content "pb"))))))
-         (res (funcall app (list :request-method :post
-                                 :path-info "/"
-                                 :headers headers
-                                 :raw-body body)))
+         (res (ag-ui-protocol:invoke-ag-ui-app
+               app (list :request-method :post
+                         :path-info "/"
+                         :headers headers
+                         :raw-body body)))
          (events (ag-ui-protocol:decode-ag-ui-framed (first (third res)))))
     (ok (= 200 (first res)))
     (ok (search "vnd.ag-ui.event+proto"
                 (getf (second res) :content-type)))
+    (ng (search "oneof" (getf (second res) :content-type)))
     (ok (equal "pb" (ag-ui-protocol:text-message-delta (third events))))))
 
 (deftest sse-encode-has-data-line

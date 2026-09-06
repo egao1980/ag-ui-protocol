@@ -15,6 +15,28 @@
     (error 'ag-ui-error
            :message "protobuf format needs serdes :wkt — load protobuf-backend-cl-protobufs")))
 
+;;; Official Event oneof is registered by ag-ui-protocol/proto. Distinct from WKT.
+(defvar *ag-ui-oneof-encoder* nil)
+(defvar *ag-ui-oneof-decoder* nil)
+
+(defun %oneof-available-p ()
+  (not (null *ag-ui-oneof-encoder*)))
+
+(defun encode-ag-ui-event-oneof (event)
+  "Encode EVENT as an official @ag-ui/proto Event oneof (unframed octets).
+   Load ag-ui-protocol/proto first. Events with no oneof field signal AG-UI-ERROR."
+  (unless *ag-ui-oneof-encoder*
+    (error 'ag-ui-error
+           :message "official Event oneof needs ag-ui-protocol/proto"))
+  (funcall *ag-ui-oneof-encoder* event))
+
+(defun decode-ag-ui-event-oneof (octets)
+  "Decode unframed official Event oneof OCTETS to a CLOS event."
+  (unless *ag-ui-oneof-decoder*
+    (error 'ag-ui-error
+           :message "official Event oneof needs ag-ui-protocol/proto"))
+  (funcall *ag-ui-oneof-decoder* octets))
+
 (defun %event-json (event)
   (if (typep event 'unknown-ag-ui-event)
       (or (unknown-ag-ui-event-table event) (stack-schema:dump event))
@@ -146,3 +168,50 @@
                         (push ev out))
                       octets)
     (nreverse out)))
+
+(defun encode-ag-ui-framed-oneof (event)
+  "One length-prefixed official Event oneof (big-endian uint32 + protobuf octets)."
+  (let* ((payload (encode-ag-ui-event-oneof event))
+         (out (make-array (+ 4 (length payload)) :element-type '(unsigned-byte 8))))
+    (%write-u32be out 0 (length payload))
+    (replace out payload :start1 4)
+    out))
+
+(defun map-ag-ui-framed-oneof (function octets)
+  "Call FUNCTION with each official-oneof event from length-prefixed OCTETS."
+  (let ((i 0)
+        (n (length octets)))
+    (loop while (< i n)
+          do (when (> (+ i 4) n)
+               (error 'ag-ui-error :message "truncated protobuf length prefix"))
+             (let ((len (%read-u32be octets i)))
+               (incf i 4)
+               (when (> (+ i len) n)
+                 (error 'ag-ui-error :message "truncated protobuf event"))
+               (funcall function
+                        (decode-ag-ui-event-oneof (subseq octets i (+ i len))))
+               (incf i len))))
+  (values))
+
+(defun decode-ag-ui-framed-oneof (octets &key on-event)
+  "Decode a length-prefixed official Event oneof stream to a list of CLOS events."
+  (let ((out '()))
+    (map-ag-ui-framed-oneof (lambda (ev)
+                              (when on-event (funcall on-event ev))
+                              (push ev out))
+                            octets)
+    (nreverse out)))
+
+(defparameter +ag-ui-oneof-event-types+
+  '("TEXT_MESSAGE_START" "TEXT_MESSAGE_CONTENT" "TEXT_MESSAGE_END"
+    "TEXT_MESSAGE_CHUNK" "TOOL_CALL_START" "TOOL_CALL_ARGS" "TOOL_CALL_END"
+    "TOOL_CALL_CHUNK" "STATE_SNAPSHOT" "STATE_DELTA" "MESSAGES_SNAPSHOT"
+    "RAW" "CUSTOM" "RUN_STARTED" "RUN_FINISHED" "RUN_ERROR"
+    "STEP_STARTED" "STEP_FINISHED"
+    "SUBAGENT_STARTED" "SUBAGENT_FINISHED" "SUBAGENT_ERROR")
+  "Official Event oneof members. The other 15 of 36 tagged classes have no field.")
+
+(defun ag-ui-oneof-event-type-p (type)
+  "Does official @ag-ui/proto Event oneof have a field for TYPE?"
+  (and (stringp type)
+       (not (null (member type +ag-ui-oneof-event-types+ :test #'string=)))))
