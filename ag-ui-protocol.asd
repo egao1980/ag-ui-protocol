@@ -1,9 +1,9 @@
 (defsystem "ag-ui-protocol"
-  :version "0.3.0"
+  :version "0.3.1"
   :description "CLOS AG-UI protocol — typed agent↔UI events (not JSON-RPC)"
   :author "egao1980"
   :license "MIT"
-  :depends-on ("json-protocol" "json-backend-jzon" "babel" "sse-protocol"
+  :depends-on ("json-protocol" "json-backend-jzon" "encoding-protocol" "sse-protocol"
                "serdes-protocol" "schema-protocol" "schema-protocol-json")
   :properties (:cl-repo (:ci (:with ("dissect"))))
   :serial t

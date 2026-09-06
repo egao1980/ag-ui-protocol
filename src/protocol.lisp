@@ -83,7 +83,7 @@
     ((null raw) "")
     ((stringp raw) raw)
     ((and (vectorp raw) (not (stringp raw)))
-     (babel:octets-to-string raw :encoding :utf-8))
+     (encoding-protocol:decode raw))
     ((streamp raw)
      (if (ignore-errors
            (let ((et (stream-element-type raw)))
@@ -97,7 +97,7 @@
            (loop for b = (read-byte raw nil :eof)
                  until (eq b :eof)
                  do (vector-push-extend b bytes))
-           (babel:octets-to-string bytes :encoding :utf-8))))
+           (encoding-protocol:decode bytes))))
     (t (princ-to-string raw))))
 
 (defparameter +ag-ui-sse-media-type+ "text/event-stream")
