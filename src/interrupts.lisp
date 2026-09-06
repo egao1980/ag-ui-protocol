@@ -143,7 +143,7 @@
        (let ((payload (event-field entry 'payload)))
          (if (hash-table-p payload)
              (multiple-value-bind (value found) (gethash "approved" payload)
-               (if found (and value (not (eq value :false))) t))
+               (if found value t))
              t))))
 
 (defun resume-edited-args (entry)
