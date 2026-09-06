@@ -89,13 +89,11 @@
 
 (stack-schema:defschema run-success-outcome (run-outcome)
   (outcome-type (eql "success") :default "success" :key "type")
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema run-interrupt-outcome (run-outcome)
   (outcome-type (eql "interrupt") :default "interrupt" :key "type")
   (interrupts (vector interrupt) :default #() :accessor outcome-interrupts)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema run-agent-input ()
@@ -146,16 +144,12 @@
   (:key-style :camel)
   (:extra :allow))
 
-;;; Subclasses must repeat :key-style. schema-protocol 0.2.1 inherits it, but CI
-;;; still pins OCI 0.2.0 (no inherit) — keep the repeats so dump stays camelCase.
-
 (stack-schema:defschema run-started-event (ag-ui-event)
   (event-type (eql "RUN_STARTED") :default "RUN_STARTED" :key "type")
   (thread-id string :accessor run-started-thread-id)
   (run-id string :accessor run-started-run-id)
   (parent-run-id string :optional t :accessor run-started-parent-run-id)
   (input run-agent-input :optional t :accessor run-started-input)
-  (:key-style :camel)
   (:extra :allow))
 
 ;;; OUTCOME is optional: a producer written before interrupts existed omits it
@@ -167,46 +161,39 @@
   (run-id string :accessor run-finished-run-id)
   (result t :optional t :accessor run-finished-result)
   (outcome run-outcome :optional t :accessor run-finished-outcome)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema run-error-event (ag-ui-event)
   (event-type (eql "RUN_ERROR") :default "RUN_ERROR" :key "type")
   (message string :accessor run-error-message)
   (code string :optional t :accessor run-error-code)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema step-started-event (ag-ui-event)
   (event-type (eql "STEP_STARTED") :default "STEP_STARTED" :key "type")
   (step-name string :accessor step-event-name)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema step-finished-event (ag-ui-event)
   (event-type (eql "STEP_FINISHED") :default "STEP_FINISHED" :key "type")
   (step-name string :accessor step-event-name)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema text-message-start-event (ag-ui-event)
   (event-type (eql "TEXT_MESSAGE_START") :default "TEXT_MESSAGE_START" :key "type")
   (message-id string :accessor text-message-id)
   (role string :default "assistant" :accessor text-message-role)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema text-message-content-event (ag-ui-event)
   (event-type (eql "TEXT_MESSAGE_CONTENT") :default "TEXT_MESSAGE_CONTENT" :key "type")
   (message-id string :accessor text-message-id)
   (delta string :accessor text-message-delta)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema text-message-end-event (ag-ui-event)
   (event-type (eql "TEXT_MESSAGE_END") :default "TEXT_MESSAGE_END" :key "type")
   (message-id string :accessor text-message-id)
-  (:key-style :camel)
   (:extra :allow))
 
 ;;; Convenience chunk events. A producer may send these instead of the explicit
@@ -218,7 +205,6 @@
   (role string :optional t :accessor text-message-role)
   (delta string :optional t :accessor text-message-delta)
   (name string :optional t :accessor text-message-name)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema tool-call-start-event (ag-ui-event)
@@ -226,20 +212,17 @@
   (tool-call-id string :accessor tool-call-id)
   (tool-call-name string :accessor tool-call-name)
   (parent-message-id string :optional t :accessor tool-call-parent-message-id)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema tool-call-args-event (ag-ui-event)
   (event-type (eql "TOOL_CALL_ARGS") :default "TOOL_CALL_ARGS" :key "type")
   (tool-call-id string :accessor tool-call-id)
   (delta string :accessor tool-call-delta)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema tool-call-end-event (ag-ui-event)
   (event-type (eql "TOOL_CALL_END") :default "TOOL_CALL_END" :key "type")
   (tool-call-id string :accessor tool-call-id)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema tool-call-result-event (ag-ui-event)
@@ -248,7 +231,6 @@
   (tool-call-id string :accessor tool-call-id)
   (content string :accessor tool-call-result-content)
   (role string :default "tool" :optional t :accessor tool-call-result-role)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema tool-call-chunk-event (ag-ui-event)
@@ -257,25 +239,21 @@
   (tool-call-name string :optional t :accessor tool-call-name)
   (parent-message-id string :optional t :accessor tool-call-parent-message-id)
   (delta string :optional t :accessor tool-call-delta)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema state-snapshot-event (ag-ui-event)
   (event-type (eql "STATE_SNAPSHOT") :default "STATE_SNAPSHOT" :key "type")
   (snapshot t :accessor state-snapshot-value)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema state-delta-event (ag-ui-event)
   (event-type (eql "STATE_DELTA") :default "STATE_DELTA" :key "type")
   (delta (vector hash-table) :accessor state-delta-patch)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema messages-snapshot-event (ag-ui-event)
   (event-type (eql "MESSAGES_SNAPSHOT") :default "MESSAGES_SNAPSHOT" :key "type")
   (messages (vector ag-ui-message) :default #() :accessor messages-snapshot-messages)
-  (:key-style :camel)
   (:extra :allow))
 
 ;;; Activity — structured, in-progress work reported between chat messages,
@@ -288,7 +266,6 @@
   (activity-type string :accessor activity-type)
   (content hash-table :accessor activity-content)
   (replace boolean :optional t :accessor activity-replace-p)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema activity-delta-event (ag-ui-event)
@@ -296,7 +273,6 @@
   (message-id string :accessor text-message-id)
   (activity-type string :accessor activity-type)
   (patch (vector hash-table) :accessor activity-patch)
-  (:key-style :camel)
   (:extra :allow))
 
 ;;; Subagents — bracket a delegated child run so a frontend can tell which
@@ -311,7 +287,6 @@
   (parent-subagent-run-id string :optional t :accessor subagent-parent-run-id)
   (parent-tool-call-id string :optional t :accessor subagent-parent-tool-call-id)
   (parent-message-id string :optional t :accessor subagent-parent-message-id)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema subagent-finished-event (ag-ui-event)
@@ -319,7 +294,6 @@
   (subagent-run-id string :accessor ag-ui-event-subagent-run-id)
   (result t :optional t :accessor subagent-result)
   (outcome hash-table :optional t :accessor subagent-outcome)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema subagent-error-event (ag-ui-event)
@@ -327,7 +301,6 @@
   (subagent-run-id string :accessor ag-ui-event-subagent-run-id)
   (message string :accessor run-error-message)
   (code string :optional t :accessor run-error-code)
-  (:key-style :camel)
   (:extra :allow))
 
 ;;; Reasoning. REASONING_START / REASONING_END bracket a reasoning context;
@@ -338,13 +311,11 @@
 (stack-schema:defschema reasoning-start-event (ag-ui-event)
   (event-type (eql "REASONING_START") :default "REASONING_START" :key "type")
   (message-id string :accessor text-message-id)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema reasoning-end-event (ag-ui-event)
   (event-type (eql "REASONING_END") :default "REASONING_END" :key "type")
   (message-id string :accessor text-message-id)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema reasoning-message-start-event (ag-ui-event)
@@ -352,7 +323,6 @@
               :key "type")
   (message-id string :accessor text-message-id)
   (role (eql "reasoning") :default "reasoning" :accessor text-message-role)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema reasoning-message-content-event (ag-ui-event)
@@ -360,14 +330,12 @@
               :default "REASONING_MESSAGE_CONTENT" :key "type")
   (message-id string :accessor text-message-id)
   (delta string :accessor text-message-delta)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema reasoning-message-end-event (ag-ui-event)
   (event-type (eql "REASONING_MESSAGE_END") :default "REASONING_MESSAGE_END"
               :key "type")
   (message-id string :accessor text-message-id)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema reasoning-message-chunk-event (ag-ui-event)
@@ -375,7 +343,6 @@
               :key "type")
   (message-id string :optional t :accessor text-message-id)
   (delta string :optional t :accessor text-message-delta)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema reasoning-encrypted-value-event (ag-ui-event)
@@ -384,7 +351,6 @@
   (subtype (member "message" "tool-call") :accessor reasoning-encrypted-subtype)
   (entity-id string :accessor reasoning-encrypted-entity-id)
   (encrypted-value string :accessor reasoning-encrypted-value)
-  (:key-style :camel)
   (:extra :allow))
 
 ;;; Deprecated upstream in favour of REASONING_*, removed at their 1.0. Decoded
@@ -393,31 +359,26 @@
 (stack-schema:defschema thinking-start-event (ag-ui-event)
   (event-type (eql "THINKING_START") :default "THINKING_START" :key "type")
   (title string :optional t :accessor thinking-title)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema thinking-end-event (ag-ui-event)
   (event-type (eql "THINKING_END") :default "THINKING_END" :key "type")
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema thinking-text-message-start-event (ag-ui-event)
   (event-type (eql "THINKING_TEXT_MESSAGE_START")
               :default "THINKING_TEXT_MESSAGE_START" :key "type")
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema thinking-text-message-content-event (ag-ui-event)
   (event-type (eql "THINKING_TEXT_MESSAGE_CONTENT")
               :default "THINKING_TEXT_MESSAGE_CONTENT" :key "type")
   (delta string :accessor text-message-delta)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema thinking-text-message-end-event (ag-ui-event)
   (event-type (eql "THINKING_TEXT_MESSAGE_END")
               :default "THINKING_TEXT_MESSAGE_END" :key "type")
-  (:key-style :camel)
   (:extra :allow))
 
 ;;; RAW and CUSTOM are the spec's designated extension points: RAW wraps a
@@ -429,14 +390,12 @@
   (event-type (eql "RAW") :default "RAW" :key "type")
   (event t :accessor raw-event-payload)
   (source string :optional t :accessor raw-event-source)
-  (:key-style :camel)
   (:extra :allow))
 
 (stack-schema:defschema custom-event (ag-ui-event)
   (event-type (eql "CUSTOM") :default "CUSTOM" :key "type")
   (name string :accessor custom-event-name)
   (value t :optional t :accessor custom-event-value)
-  (:key-style :camel)
   (:extra :allow))
 
 ;;; Forward compatibility. A producer on a newer spec revision may send event
@@ -448,7 +407,6 @@
 (stack-schema:defschema unknown-ag-ui-event (ag-ui-event)
   (raw-table hash-table :optional t :wire nil :dump nil
              :accessor unknown-ag-ui-event-table)
-  (:key-style :camel)
   (:extra :allow))
 
 (defclass ag-ui-agent ()

@@ -1,5 +1,5 @@
 (defsystem "ag-ui-protocol"
-  :version "0.4.0"
+  :version "0.4.1"
   :description "CLOS AG-UI protocol — typed agent↔UI events (not JSON-RPC)"
   :author "egao1980"
   :license "MIT"
@@ -52,7 +52,7 @@
 ;;; Official Event oneof. Separate so JSON-only consumers do not pull cl-protobufs.
 ;;; Schema is the vendored proto/*.lisp produced by cl-protobufs' protoc plugin.
 (defsystem "ag-ui-protocol/proto"
-  :version "0.4.0"
+  :version "0.4.1"
   :description "Official @ag-ui/proto Event oneof encode/decode for ag-ui-protocol"
   :author "egao1980"
   :license "MIT"
