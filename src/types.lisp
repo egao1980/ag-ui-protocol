@@ -146,8 +146,8 @@
   (:key-style :camel)
   (:extra :allow))
 
-;;; Subclasses must repeat :key-style — schema-protocol does not inherit it
-;;; (initform :downcase), so dump/parse would emit thread-id instead of threadId.
+;;; Subclasses must repeat :key-style. schema-protocol 0.2.1 inherits it, but CI
+;;; still pins OCI 0.2.0 (no inherit) — keep the repeats so dump stays camelCase.
 
 (stack-schema:defschema run-started-event (ag-ui-event)
   (event-type (eql "RUN_STARTED") :default "RUN_STARTED" :key "type")

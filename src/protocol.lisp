@@ -102,6 +102,7 @@
 
 (defparameter +ag-ui-sse-media-type+ "text/event-stream")
 (defparameter +ag-ui-proto-media-type+ "application/vnd.ag-ui.event+proto")
+(defparameter +ag-ui-oneof-media-type+ "application/vnd.ag-ui.event+oneof")
 
 (defun %split-comma (string)
   (loop for start = 0 then (1+ comma)
@@ -132,18 +133,31 @@
           for q = (if semi (%accept-q (subseq trimmed (1+ semi))) 1.0)
           collect (cons media q))))
 
-(defun negotiate-ag-ui-format (accept &key (protobuf-available-p (%wkt-available-p)))
-  "→ :json, :protobuf, or NIL (406).
+(defun negotiate-ag-ui-format (accept &key
+                                     (protobuf-available-p (%wkt-available-p))
+                                     (oneof-available-p (%oneof-available-p)))
+  "→ :json, :protobuf (WKT), :oneof (official Event), or NIL (406).
 
-   Protobuf is chosen only when `application/vnd.ag-ui.event+proto` is explicit
-   with q>0 and a :wkt serdes backend is loaded. Otherwise SSE when
+   Binary types are chosen only when named explicitly with q>0. WKT stays on
+   `application/vnd.ag-ui.event+proto`. Official Event oneof is
+   `application/vnd.ag-ui.event+oneof` — the spec reuses +proto for oneof, but
+   that media type already means WKT here; do not silently replace it.
+   First matching explicit type in Accept wins. Otherwise SSE when
    text/event-stream, text/*, */*, or Accept is absent."
   (let ((parts (%parse-accept accept)))
     (flet ((q (type)
              (or (cdr (assoc type parts :test #'string=)) 0)))
+      (dolist (pair parts)
+        (cond
+          ((and (string= (car pair) +ag-ui-oneof-media-type+)
+                (plusp (cdr pair))
+                oneof-available-p)
+           (return-from negotiate-ag-ui-format :oneof))
+          ((and (string= (car pair) +ag-ui-proto-media-type+)
+                (plusp (cdr pair))
+                protobuf-available-p)
+           (return-from negotiate-ag-ui-format :protobuf))))
       (cond
-        ((and protobuf-available-p (plusp (q +ag-ui-proto-media-type+)))
-         :protobuf)
         ((or (null parts)
              (plusp (q +ag-ui-sse-media-type+))
              (plusp (q "text/*"))
@@ -162,15 +176,59 @@
            (cdr (assoc name headers :test #'string-equal))))
       (t nil))))
 
-(defun %run-protobuf-body (agent input)
-  (let ((out (make-array 0 :element-type '(unsigned-byte 8)
-                           :adjustable t :fill-pointer 0)))
+(defun %concat-chunks (chunks)
+  (cond
+    ((null chunks) #())
+    ((every (lambda (c) (and (vectorp c) (not (stringp c)))) chunks)
+     (apply #'concatenate '(vector (unsigned-byte 8)) chunks))
+    (t (apply #'concatenate 'string
+              (mapcar (lambda (c)
+                        (if (stringp c)
+                            c
+                            (encoding-protocol:decode c)))
+                      chunks)))))
+
+(defun invoke-ag-ui-app (app env)
+  "Call APP and return a materialized Clack 3-list.
+   Drains a response function (binary frames stay octets) or a body writer."
+  (let ((res (funcall app env)))
+    (cond
+      ((functionp res)
+       (let ((status nil) (headers nil) (chunks '()))
+         (funcall res
+                  (lambda (status-and-headers)
+                    (setf status (first status-and-headers)
+                          headers (second status-and-headers))
+                    (lambda (body &key (start 0) end close)
+                      (declare (ignore close))
+                      (when body
+                        (push (subseq body start (or end (length body)))
+                              chunks))
+                      (values))))
+         (list status headers (list (%concat-chunks (nreverse chunks))))))
+      ((and (consp res) (functionp (third res)))
+       (list (first res) (second res)
+             (list (with-output-to-string (s)
+                     (funcall (third res) s)))))
+      (t res))))
+
+(defun %clack-binary-response (status headers write-fn)
+  "Clack response function. WRITE-FN receives (lambda (octets)).
+   Writes octet vectors to the responder — never PRINC (Hunchentoot footgun)."
+  (lambda (responder)
+    (let ((writer (funcall responder (list status headers))))
+      (funcall write-fn
+               (lambda (octets)
+                 (when (and octets (plusp (length octets)))
+                   (funcall writer octets))))
+      (ignore-errors (funcall writer nil :close t)))))
+
+(defun %stream-framed-events (agent input encode-frame)
+  (lambda (write-octets)
     (run-agent agent input
                :on-event
                (lambda (ev)
-                 (loop for b across (encode-ag-ui-framed ev)
-                       do (vector-push-extend b out))))
-    (coerce out '(simple-array (unsigned-byte 8) (*)))))
+                 (funcall write-octets (funcall encode-frame ev))))))
 
 (defun %app-capabilities (agent)
   (or (get-capabilities agent)
@@ -178,12 +236,13 @@
        :identity (%make 'identity-capabilities :name (ag-ui-agent-name agent))
        :transport (%make 'transport-capabilities
                          :streaming t
-                         :http-binary (%wkt-available-p)))))
+                         :http-binary (or (%wkt-available-p)
+                                          (%oneof-available-p))))))
 
 (defun make-ag-ui-app (agent &key (path "/") (event-format :negotiate))
   "Clack app: POST PATH with RunAgentInput JSON → event stream.
    GET PATH → AgentCapabilities JSON.
-   EVENT-FORMAT is :negotiate (Accept), :json, or :protobuf."
+   EVENT-FORMAT is :negotiate (Accept), :json, :protobuf (WKT), or :oneof."
   (lambda (env)
     (let ((req-path (or (getf env :path-info) "/"))
           (method (getf env :request-method)))
@@ -200,15 +259,24 @@
                               (:negotiate (negotiate-ag-ui-format accept))
                               (:json :json)
                               (:protobuf
-                               (if (%wkt-available-p) :protobuf nil))))
+                               (if (%wkt-available-p) :protobuf nil))
+                              (:oneof
+                               (if (%oneof-available-p) :oneof nil))))
                     (input (decode-run-agent-input
                             (%slurp-raw-body (getf env :raw-body)))))
                (cond
                  ((eq format :protobuf)
-                  (list 200
-                        (list :content-type +ag-ui-proto-media-type+
-                              :cache-control "no-cache")
-                        (list (%run-protobuf-body agent input))))
+                  (%clack-binary-response
+                   200
+                   (list :content-type +ag-ui-proto-media-type+
+                         :cache-control "no-cache")
+                   (%stream-framed-events agent input #'encode-ag-ui-framed)))
+                 ((eq format :oneof)
+                  (%clack-binary-response
+                   200
+                   (list :content-type +ag-ui-oneof-media-type+
+                         :cache-control "no-cache")
+                   (%stream-framed-events agent input #'encode-ag-ui-framed-oneof)))
                  ((eq format :json)
                   (list 200
                         '(:content-type "text/event-stream; charset=utf-8"

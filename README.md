@@ -48,9 +48,14 @@ Bindings: [`ag-ui-backend-sse`](https://github.com/egao1980/ag-ui-backend-sse)
 
 `:format :protobuf` is JSON-as-WKT (`google.protobuf.Value` via serdes `:wkt`),
 length-prefixed under `application/vnd.ag-ui.event+proto`. That is **not** the
-official `Event` oneof — unknown event types survive as tables. `make-ag-ui-app`
-negotiates `Accept`: proto media type → binary; otherwise SSE. GET on the
-agent path returns `AgentCapabilities`.
+official `Event` oneof — unknown event types survive as tables.
+
+Official `@ag-ui/proto` Event oneof is `ag-ui-protocol/proto`:
+`encode-ag-ui-event-oneof` / `decode-ag-ui-event-oneof` (21 oneof fields; the
+other 15 tagged classes signal). HTTP uses a **distinct** media type
+`application/vnd.ag-ui.event+oneof` so Accept `+proto` still means WKT.
+`make-ag-ui-app` streams length-prefixed frames via a Clack response function
+(octet writer, not `princ`). GET on the agent path returns `AgentCapabilities`.
 
 Part of [cl-stack](https://github.com/egao1980/cl-stack) agent-wire
 ([brief](https://github.com/egao1980/cl-stack/blob/main/docs/capabilities/ag-ui.md)).

@@ -1,5 +1,5 @@
 (defsystem "ag-ui-protocol"
-  :version "0.3.2"
+  :version "0.4.0"
   :description "CLOS AG-UI protocol — typed agent↔UI events (not JSON-RPC)"
   :author "egao1980"
   :license "MIT"
@@ -49,14 +49,34 @@
                (:file "adapter"))
   :in-order-to ((test-op (test-op "ag-ui-protocol/tests"))))
 
+;;; Official Event oneof. Separate so JSON-only consumers do not pull cl-protobufs.
+;;; Schema is the vendored proto/*.lisp produced by cl-protobufs' protoc plugin.
+(defsystem "ag-ui-protocol/proto"
+  :version "0.4.0"
+  :description "Official @ag-ui/proto Event oneof encode/decode for ag-ui-protocol"
+  :author "egao1980"
+  :license "MIT"
+  :depends-on ("ag-ui-protocol"
+               (:version "protobuf-protocol" "0.2.0")
+               (:version "protobuf-backend-cl-protobufs" "0.2.0")
+               "cl-protobufs")
+  :serial t
+  :components ((:file "proto/preload")
+               (:file "proto/patch")
+               (:file "proto/types")
+               (:file "proto/events")
+               (:file "src/oneof"))
+  :in-order-to ((test-op (test-op "ag-ui-protocol/tests"))))
+
 (defsystem "ag-ui-protocol/tests"
   :depends-on ("ag-ui-protocol" "ag-ui-protocol/client"
-               "ag-ui-protocol/capability"
+               "ag-ui-protocol/capability" "ag-ui-protocol/proto"
                (:version "protobuf-backend-cl-protobufs" "0.2.0") "rove")
   :pathname "tests"
   :serial t
   :components ((:file "package")
                (:file "protocol-test")
+               (:file "oneof-test")
                (:file "client-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)
